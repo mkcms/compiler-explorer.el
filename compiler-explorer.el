@@ -608,11 +608,15 @@ When the session is killed, the temporary directory is deleted."
   (setq compiler-explorer--execution-input input)
   (compiler-explorer--request-async))
 
+(defvar compiler-explorer-set-compiler-args-history nil
+  "Minibuffer history for `compiler-explorer-set-compiler-args'.")
+
 (defun compiler-explorer-set-compiler-args (args)
   "Set compilation arguments to the string ARGS and recompile."
   (interactive (list (read-from-minibuffer
                       "Compiler arguments: "
-                      compiler-explorer--compiler-arguments)))
+                      compiler-explorer--compiler-arguments
+                      nil nil 'compiler-explorer-set-compiler-args-history)))
   (setq compiler-explorer--compiler-arguments args)
   (compiler-explorer--request-async))
 
