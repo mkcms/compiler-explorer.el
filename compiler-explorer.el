@@ -667,6 +667,7 @@ When the session is killed, the temporary directory is deleted."
 
       (setq buffer-read-only t)
       (setq buffer-undo-list t)
+      (setq truncate-lines t)
       (setq header-line-format
             `(:eval (compiler-explorer--header-line-format-compiler)))
 
