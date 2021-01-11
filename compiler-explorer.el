@@ -87,9 +87,11 @@
 (defvar compiler-explorer-url "https://godbolt.org")
 
 (defun compiler-explorer--url (&rest chunks)
+  "Make compiler-explorer API endpoint URL from CHUNKS."
   (concat compiler-explorer-url "/api/" (string-join chunks "/")))
 
 (defun compiler-explorer--parse-json ()
+  "Parse buffer as json plist."
   (let ((json-object-type 'plist))
     (json-read)))
 
@@ -226,6 +228,7 @@ with `json-parse', and a message is displayed.")
                 :value-type boolean))
 
 (defun compiler-explorer--output-filters ()
+  "Get output filters options in a form suitable for making a request."
   (mapcar (lambda (v) (or v :json-false)) compiler-explorer-output-filters))
 
 (defun compiler-explorer--request-async ()
@@ -453,6 +456,7 @@ This calls `compiler-explorer--handle-compilation-response' and
       'help-echo "mouse-1: Set program arguments")))
 
 (defun compiler-explorer--after-change (&rest _args)
+  "Schedule recompilation after buffer is modified."
   (when compiler-explorer--recompile-timer
     (cancel-timer compiler-explorer--recompile-timer))
   (setq compiler-explorer--recompile-timer
@@ -523,12 +527,15 @@ When the session is killed, the temporary directory is deleted."
 
 (defvar compiler-explorer--project-dir nil)
 (defun compiler-explorer--project-find-function (_dir)
+  "Return project with a temporary directory in a compiler-explorer session."
   (and compiler-explorer--project-dir
        `(transient . ,compiler-explorer--project-dir)))
 
 (defvar compiler-explorer--filename-regexp "<source>\\|\\(example[.][^.]+$\\)")
 (defun compiler-explorer--compilation-parse-errors-filename
     (filename)
+  "Wrapper for parsing FILENAME in compiler output buffer.
+This allows navigating to errors in source code from that buffer."
   (when (string-match-p compiler-explorer--filename-regexp filename)
     (file-name-nondirectory
      (buffer-file-name (get-buffer compiler-explorer--buffer)))))
@@ -556,6 +563,7 @@ When the session is killed, the temporary directory is deleted."
     ring))
 
 (defun compiler-explorer--current-session ()
+  "Serialize current session as plist."
   `(
     :lang-name ,(plist-get compiler-explorer--language-data :name)
     :compiler ,(plist-get compiler-explorer--compiler-data :id)
@@ -567,6 +575,8 @@ When the session is killed, the temporary directory is deleted."
                (buffer-substring-no-properties (point-min) (point-max)))))
 
 (defun compiler-explorer--restore-session (session)
+  "Restore serialized SESSION.
+It must have been created with `compiler-explorer--current-session'."
   (cl-destructuring-bind
       (&key lang-name compiler libs args exe-args input source) session
     (compiler-explorer-new-session lang-name compiler)
@@ -597,7 +607,8 @@ When the session is killed, the temporary directory is deleted."
 
 ;; User commands & modes
 
-(define-minor-mode compiler-explorer-mode ""
+(define-minor-mode compiler-explorer-mode
+  "Minor mode used in compiler-explorer buffers."
   :lighter " CE"
   (cond
    (compiler-explorer-mode
