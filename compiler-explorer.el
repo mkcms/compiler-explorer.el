@@ -594,8 +594,6 @@ When the session is killed, the temporary directory is deleted."
       (print (ring-elements compiler-explorer--session-ring)
              (current-buffer)))))
 
-(add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
-
 
 ;; User commands & modes
 
@@ -907,6 +905,8 @@ end, with the source buffer as current."
               (expand-file-name (concat "source" (aref extensions 0))
                                 compiler-explorer--project-dir))
         (let ((save-silently t)) (save-buffer)))
+
+      (add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
 
       (pop-to-buffer (current-buffer))
       (run-hooks 'compiler-explorer-new-session-hook))))
