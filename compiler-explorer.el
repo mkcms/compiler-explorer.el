@@ -87,7 +87,7 @@
 (defvar compiler-explorer-url "https://godbolt.org")
 
 (defun compiler-explorer--url (&rest chunks)
-  "Make compiler-explorer API endpoint URL from CHUNKS."
+  "Make compiler explorer API endpoint URL from CHUNKS."
   (concat compiler-explorer-url "/api/" (string-join chunks "/")))
 
 (defun compiler-explorer--parse-json ()
@@ -96,7 +96,9 @@
     (json-read)))
 
 (defun compiler-explorer--request (&rest args)
-  "Like `request', but works with `url-retrieve' backend."
+  "Like `request', but works with `url-retrieve' backend.
+Calls `request' with ARGS, but ensures that the request contains
+proper headers."
   (declare (indent defun))
   ;; When using `url-retrieve' as `request-backend', the url-retrieve library
   ;; always adds "Accept: */*" field to each HTTP request.  But, we tell
@@ -347,7 +349,7 @@ This calls `compiler-explorer--handle-compilation-response' and
           (insert (format "Program exited with code %s" code)))))))
 
 (defun compiler-explorer--mode-line-format ()
-  "Get the mode line format for `compiler-explorer-mode'."
+  "Get the mode line format used in compiler explorer mode."
   (let ((resp compiler-explorer--last-compilation-request))
     (propertize
      (concat "CE: "
@@ -527,7 +529,7 @@ When the session is killed, the temporary directory is deleted."
 
 (defvar compiler-explorer--project-dir nil)
 (defun compiler-explorer--project-find-function (_dir)
-  "Return project with a temporary directory in a compiler-explorer session."
+  "Return project with a temporary directory in a compiler explorer session."
   (and compiler-explorer--project-dir
        `(transient . ,compiler-explorer--project-dir)))
 
@@ -871,7 +873,7 @@ With an optional prefix argument OPEN, open that link in a browser."
 The source buffer is current when this hook runs.")
 
 (defun compiler-explorer-new-session (lang &optional compiler)
-  "Create a new compiler-explorer session with language named LANG.
+  "Create a new compiler explorer session with language named LANG.
 If COMPILER (name or id) is non-nil, set that compiler.
 
 If a session already exists, it is killed and saved to the
@@ -929,7 +931,7 @@ was created/restored.")
 
 ;;;###autoload
 (defun compiler-explorer ()
-  "Open a compiler-explorer session.
+  "Open a compiler explorer session.
 If a live session exists, just pop to the source buffer.
 If there are saved sessions, restore the last one.
 Otherwise, create a new session (`compiler-explorer-new-session').
