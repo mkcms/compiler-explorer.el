@@ -289,6 +289,7 @@ This calls `compiler-explorer--handle-compilation-response' and
 
 (cl-defun compiler-explorer--handle-compilation-response
     (&key data &allow-other-keys)
+  "Handle compilation response contained in DATA."
   (cl-destructuring-bind (&key asm stdout stderr code &allow-other-keys) data
     (let ((compiler (get-buffer compiler-explorer--compiler-buffer))
           (output (get-buffer-create compiler-explorer--output-buffer)))
@@ -328,6 +329,7 @@ This calls `compiler-explorer--handle-compilation-response' and
 
 (cl-defun compiler-explorer--handle-execution-response
     (&key data &allow-other-keys)
+  "Handle execution response contained in DATA."
   (cl-destructuring-bind (&key stdout stderr code &allow-other-keys) data
     (with-current-buffer (get-buffer-create compiler-explorer--exe-output-buffer)
       (compiler-explorer-mode +1)
