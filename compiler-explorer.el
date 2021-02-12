@@ -590,9 +590,9 @@ It must have been created with `compiler-explorer--current-session'."
         (insert source)
         (set-buffer-modified-p nil)))
     (setq compiler-explorer--selected-libraries libs)
-    (setq compiler-explorer--compiler-arguments args)
-    (setq compiler-explorer--execution-arguments exe-args)
-    (setq compiler-explorer--execution-input input)))
+    (compiler-explorer-set-compiler-args args)
+    (compiler-explorer-set-execution-args exe-args)
+    (compiler-explorer-set-input input)))
 
 (defvar compiler-explorer--last-session nil)
 
@@ -629,13 +629,26 @@ It must have been created with `compiler-explorer--current-session'."
   (interactive)
   (display-buffer compiler-explorer--output-buffer))
 
+(defvar compiler-explorer-params-change-hook nil
+  "Hook called when parameters change.
+Each function is called with two arguments: WHAT and VALUE.  WHAT
+is a symbol, either:
+ - `input'
+ - `compiler'
+ - `compiler-args'
+ - `execution-args'
+
+VALUE is the new value, a string.
+")
+
 (defun compiler-explorer-set-input (input)
   "Set the input to use as stdin for execution to INPUT, a string."
   (interactive (list
                 (read-from-minibuffer "Stdin: "
                                       compiler-explorer--execution-input)))
   (setq compiler-explorer--execution-input input)
-  (compiler-explorer--request-async))
+  (compiler-explorer--request-async)
+  (run-hook-with-args 'compiler-explorer-params-change-hook 'input input))
 
 (defvar compiler-explorer-set-compiler-args-history nil
   "Minibuffer history for `compiler-explorer-set-compiler-args'.")
@@ -647,7 +660,9 @@ It must have been created with `compiler-explorer--current-session'."
                       compiler-explorer--compiler-arguments
                       nil nil 'compiler-explorer-set-compiler-args-history)))
   (setq compiler-explorer--compiler-arguments args)
-  (compiler-explorer--request-async))
+  (compiler-explorer--request-async)
+  (run-hook-with-args 'compiler-explorer-params-change-hook
+                      'compiler-args args))
 
 (defun compiler-explorer-set-execution-args (args)
   "Set execution arguments to the string ARGS and recompile."
@@ -655,7 +670,9 @@ It must have been created with `compiler-explorer--current-session'."
                       "Execution arguments: "
                       compiler-explorer--execution-arguments)))
   (setq compiler-explorer--execution-arguments args)
-  (compiler-explorer--request-async))
+  (compiler-explorer--request-async)
+  (run-hook-with-args 'compiler-explorer-params-change-hook
+                      'execution-args args))
 
 (defun compiler-explorer-set-compiler (name-or-id)
   "Select compiler NAME-OR-ID for current session."
@@ -702,7 +719,10 @@ It must have been created with `compiler-explorer--current-session'."
 
       (compiler-explorer--request-async)
 
-      (pop-to-buffer (current-buffer)))))
+      (pop-to-buffer (current-buffer))
+
+      (run-hook-with-args 'compiler-explorer-params-change-hook
+                          'compiler (plist-get compiler-data :name)))))
 
 (defun compiler-explorer-add-library (id version-id)
   "Add library ID with VERSION-ID to current compilation."
