@@ -936,6 +936,7 @@ end, with the source buffer as current."
       (when compiler-explorer-make-temp-file
         (setq compiler-explorer--project-dir
               (make-temp-file "compiler-explorer" 'dir))
+        (setq-local default-directory compiler-explorer--project-dir)
         (setq buffer-file-name
               (expand-file-name (concat "source" (aref extensions 0))
                                 compiler-explorer--project-dir))
