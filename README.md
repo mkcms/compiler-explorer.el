@@ -17,7 +17,7 @@ code.  Another buffer displays output of the compiled and executed program.
 `M-x compiler-explorer-add-library` asks for a library version and adds it to
 current compilation.  `M-x compiler-explorer-remove-library` removes them.
 
-`M-x compiler-explorer-set-execution-args` sets the arguments for the executied
+`M-x compiler-explorer-set-execution-args` sets the arguments for the executed
 program.
 
 `M-x compiler-explorer-set-input` reads a string from minibuffer that will be
