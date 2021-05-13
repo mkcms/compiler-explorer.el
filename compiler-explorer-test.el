@@ -44,7 +44,7 @@
                      compiler-explorer--last-compilation-request))
                (not (request-response-done-p
                      compiler-explorer--last-exe-request)))
-      (sit-for 0.1))))
+      (accept-process-output nil 0.1))))
 
 (defun compiler-explorer-test--insert (string)
   "Erase source buffer then insert STRING and wait until compilation finishes."
