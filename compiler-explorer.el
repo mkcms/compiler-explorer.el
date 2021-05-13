@@ -296,7 +296,11 @@ This calls `compiler-explorer--handle-compilation-response' and
       (with-current-buffer compiler
         (let ((buffer-read-only nil))
           (erase-buffer)
-          (insert (mapconcat (lambda (line) (plist-get line :text)) asm "\n"))))
+          (insert (mapconcat (lambda (line) (plist-get line :text)) asm "\n"))
+
+          ;; Make the ASM view more like godbolt.org.
+          ;; TODO: this should be only set once - when this buffer is created.
+          (setq truncate-lines t)))
 
       ;; Update output buffer
       (with-current-buffer output
@@ -713,7 +717,6 @@ VALUE is the new value, a string.
 
       (setq buffer-read-only t)
       (setq buffer-undo-list t)
-      (setq truncate-lines t)
       (setq header-line-format
             `(:eval (compiler-explorer--header-line-format-compiler)))
 
