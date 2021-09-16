@@ -352,7 +352,8 @@ This calls `compiler-explorer--handle-compilation-response' and
           (insert (mapconcat (lambda (line) (plist-get line :text))
                              stderr "\n")
                   "\n")
-          (insert (format "Program exited with code %s" code)))))))
+          (insert (format "Program exited with code %s" code))
+          (ansi-color-apply-on-region (point-min) (point-max)))))))
 
 (defun compiler-explorer--mode-line-format ()
   "Get the mode line format used in compiler explorer mode."
