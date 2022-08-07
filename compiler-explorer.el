@@ -278,7 +278,7 @@ This calls `compiler-explorer--handle-compilation-response' and
                                       (pcase-lambda (`(,id . ,version))
                                         `(:id ,id :version ,version))
                                       compiler-explorer--selected-libraries)])
-                      :allowStoreCodeDebug nil)))
+                      :allowStoreCodeDebug :json-false)))
            :parser #'compiler-explorer--parse-json-compilation
            :complete (lambda (&rest _args) (force-mode-line-update t))
            :error #'ignore              ;Error is displayed in the mode-line
