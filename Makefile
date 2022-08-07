@@ -16,6 +16,7 @@ COMPILE_ARGS := --eval '(progn                                                \
 # Sexp to fill paragraphs in the commentary section.
 FILL_COMMENTARY := '(progn                                                    \
 	(delete-trailing-whitespace)                                          \
+        (setq fill-column 74)                                                 \
 	(fill-individual-paragraphs (search-forward "Commentary:")            \
 	                            (search-forward "Code:"))                 \
 	(save-buffer))'
@@ -37,6 +38,8 @@ readme-to-el:
 	    -e 's/^/;; /'                       `# Add lisp comment char`     \
 	    -e 's/`M-x ([^`]+)`/M-x `\1'"'"'/g' `# Elisp backticks`           \
 	    -e 's/Emacs package/Package/g'      `# It's obviously for Emacs`  \
+	    -e 's/(\[compiler[- ]explorer\]){2,}/https:\/\/godbolt.org/g'     \
+	    -e '/^;* \[compiler-explorer/d'                                   \
 	    >  commentary.txt                                                 \
 	&& ( sed '1,/^;;; Commentary:/p;d' compiler-explorer.el               \
 	&& echo && cat commentary.txt && echo                                 \

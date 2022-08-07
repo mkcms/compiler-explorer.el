@@ -1,7 +1,6 @@
 # compiler-explorer.el #
 
-Emacs package that provides a simple client for [compiler
-explorer][compiler-explorer] service.
+Emacs package that provides a simple client for [compiler explorer][compiler-explorer] service.
 
 ## Usage ##
 
