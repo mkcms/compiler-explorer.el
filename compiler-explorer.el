@@ -357,7 +357,9 @@ This calls `compiler-explorer--handle-compilation-response' and
 
 (defun compiler-explorer--mode-line-format ()
   "Get the mode line format used in compiler explorer mode."
-  (let ((resp compiler-explorer--last-compilation-request))
+  (let ((resp (if (eq (current-buffer) (get-buffer compiler-explorer--exe-output-buffer))
+                  compiler-explorer--last-exe-request
+                compiler-explorer--last-compilation-request)))
     (propertize
      (concat "CE: "
              (cond
