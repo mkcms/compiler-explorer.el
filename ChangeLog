@@ -1,0 +1,19 @@
+2022-11-08  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.2.0
+
+	- New hook `compiler-explorer-params-change-hook' which runs when
+	compilation parameters change (like arguments, execution input string).
+
+	- Execution output buffer now recognizes ANSI escape codes.  With
+	this, e.g. AddressSanitizer output is shown properly.
+
+	- Lines in ASM buffer are now always truncated.
+
+	- Various fixes
+
+2021-02-07  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.1.0
+
+	Initial release
