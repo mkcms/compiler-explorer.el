@@ -386,8 +386,8 @@ This calls `compiler-explorer--handle-compilation-response' and
                                  (goto-char (point-min))
                                  (forward-line 30)
                                  (concat (buffer-substring (point-min)
-                                                           (point-at-bol))
-                                         (unless (= (point-at-bol) (point-max))
+                                                           (line-beginning-position))
+                                         (unless (= (line-beginning-position) (point-max))
                                            (concat "... message truncated. "
                                                    "See output buffer to "
                                                    "show all.\n"))
