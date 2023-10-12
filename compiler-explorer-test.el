@@ -38,7 +38,7 @@
 
 (defun compiler-explorer-test--wait ()
   "Wait until compilation finishes."
-  (with-timeout (5 (error "Test timed out"))
+  (with-timeout (15 (error "Test timed out"))
     (while (or (member compiler-explorer--recompile-timer timer-list)
                (not (request-response-done-p
                      compiler-explorer--last-compilation-request))
