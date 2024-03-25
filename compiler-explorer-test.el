@@ -42,8 +42,9 @@
     (while (or (member compiler-explorer--recompile-timer timer-list)
                (not (request-response-done-p
                      compiler-explorer--last-compilation-request))
-               (not (request-response-done-p
-                     compiler-explorer--last-exe-request)))
+               (and compiler-explorer--last-exe-request
+                    (not (request-response-done-p
+                          compiler-explorer--last-exe-request))))
       (accept-process-output nil 0.1))))
 
 (defun compiler-explorer-test--insert (string)
@@ -83,6 +84,7 @@
            (lang-data (seq-find (lambda (l) (string= (plist-get l :id) lang))
                                 (compiler-explorer--languages))))
       (should (stringp lang))
+      (should (memq :supportsExecute lang-data))
       (should lang-data))))
 
 (ert-deftest compiler-explorer-api-libraries ()
@@ -249,6 +251,16 @@ int main(int argc, char** argv) {
 
     (should (string-match-p "Input: FOO"
                             (compiler-explorer-test--execution-result)))))
+
+(ert-deftest compiler-explorer-execution-support ()
+  (compiler-explorer-test--with-session "C++" "ARM GCC trunk"
+    (compiler-explorer-test--insert "int main() {}")
+
+    (compiler-explorer-test--wait)
+
+    (should (string-match-p
+             "Error: the ARM GCC trunk compiler does not support execution"
+             (compiler-explorer-test--execution-result)))))
 
 (ert-deftest compiler-explorer-restoring-killed-session ()
   (compiler-explorer-test--with-session "C++" nil

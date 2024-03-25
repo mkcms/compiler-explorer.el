@@ -130,7 +130,9 @@ proper headers."
             (request-response-data
              (compiler-explorer--request (compiler-explorer--url "compilers")
                :sync t
-               ;; :params '(("fields" . "all"))
+               :params `(("fields" .
+                          ,(concat "id,name,lang,compilerType,semver,"
+                                   "extensions,monaco,supportsExecute")))
                :headers '(("Accept" . "application/json"))
                :parser #'compiler-explorer--parse-json)))))
 
@@ -235,13 +237,16 @@ with `json-parse', and a message is displayed.")
   "Queue compilation and execution and return immediately.
 This calls `compiler-explorer--handle-compilation-response' and
 `compiler-explorer--handle-execution-response' once the responses arrive."
-  (pcase-dolist (`(,executorRequest ,symbol ,handler)
-                 `((:json-false
-                    compiler-explorer--last-compilation-request
-                    compiler-explorer--handle-compilation-response)
-                   (t
-                    compiler-explorer--last-exe-request
-                    compiler-explorer--handle-execution-response)))
+  (pcase-dolist
+      (`(,executorRequest ,symbol ,handler)
+       `((:json-false
+          compiler-explorer--last-compilation-request
+          compiler-explorer--handle-compilation-response)
+         ,@(when (eq t (plist-get compiler-explorer--compiler-data
+                                  :supportsExecute))
+             '((t
+                compiler-explorer--last-exe-request
+                compiler-explorer--handle-execution-response)))))
     (when-let ((last (symbol-value symbol)))
       ;; Abort last request
       (unless (request-response-done-p last)
@@ -281,6 +286,9 @@ This calls `compiler-explorer--handle-compilation-response' and
            :complete (lambda (&rest _args) (force-mode-line-update t))
            :error #'ignore              ;Error is displayed in the mode-line
            :success handler)))
+  (unless (eq t (plist-get compiler-explorer--compiler-data :supportsExecute))
+    (setq compiler-explorer--last-exe-request nil)
+    (compiler-explorer--handle-compiler-with-no-execution))
   (force-mode-line-update))
 
 (defvar compiler-explorer--project-dir)
@@ -329,6 +337,48 @@ This calls `compiler-explorer--handle-compilation-response' and
             (compilation-parse-errors (point-min) (point-max)))))))
   (force-mode-line-update t))
 
+(defun compiler-explorer--handle-compiler-with-no-execution ()
+  "Update the execution output buffer with info about unsupported compiler.
+This will write the list of supported compilers in the execution
+output buffer."
+  (let ((compiler compiler-explorer--compiler-data)
+        (lang-id (plist-get compiler-explorer--language-data :id)))
+    (with-current-buffer
+        (get-buffer-create compiler-explorer--exe-output-buffer)
+      (compiler-explorer-mode +1)
+      (setq buffer-read-only t)
+      (setq buffer-undo-list t)
+      (setq header-line-format
+            `(:eval (compiler-explorer--header-line-format-executor)))
+      (let ((buffer-read-only nil))
+        (erase-buffer)
+        (save-excursion
+          (insert (format "Error: The %s compiler does not support execution."
+                          (propertize (plist-get compiler :name)
+                                      'face 'underline)))
+          (insert "\n\n")
+          (insert "The current language supports execution with these "
+                  "compilers (click to set):\n")
+
+          (cl-loop for comp across (compiler-explorer--compilers)
+                   for lang = (plist-get comp :lang)
+                   for id = (plist-get comp :id)
+                   for executable = (eq t (plist-get comp :supportsExecute))
+                   with keymap = (let ((map (make-keymap)))
+                                   (define-key map [mouse-1]
+                                               'compiler-explorer-set-compiler)
+                                   map)
+                   if (and (string= lang lang-id) executable)
+                   do (insert " "
+                              (propertize
+                               (plist-get comp :name)
+                               'compiler-explorer-compiler-id id
+                               'face 'link
+                               'mouse-face 'highlight
+                               'keymap  keymap
+                               'help-echo "Click to set")
+                              "\n")))))))
+
 (cl-defun compiler-explorer--handle-execution-response
     (&key data &allow-other-keys)
   "Handle execution response contained in DATA."
@@ -355,12 +405,19 @@ This calls `compiler-explorer--handle-compilation-response' and
 
 (defun compiler-explorer--mode-line-format ()
   "Get the mode line format used in compiler explorer mode."
-  (let ((resp (if (eq (current-buffer) (get-buffer compiler-explorer--exe-output-buffer))
-                  compiler-explorer--last-exe-request
-                compiler-explorer--last-compilation-request)))
+  (let* ((is-exe (eq (current-buffer)
+                     (get-buffer compiler-explorer--exe-output-buffer)))
+         (resp (if is-exe
+                   compiler-explorer--last-exe-request
+                 compiler-explorer--last-compilation-request)))
     (propertize
      (concat "CE: "
              (cond
+              ((and (null resp) is-exe
+                    (eq :json-false
+                        (plist-get compiler-explorer--compiler-data
+                                   :supportsExecute)))
+               (propertize "ERROR" 'face 'error))
               ((null resp) "")
               ((not (request-response-done-p resp)) "Wait...")
               ((request-response-error-thrown resp)
@@ -680,22 +737,35 @@ VALUE is the new value, a string.
                       'execution-args args))
 
 (defun compiler-explorer-set-compiler (name-or-id)
-  "Select compiler NAME-OR-ID for current session."
+  "Select compiler NAME-OR-ID for current session.
+Interactively, prompts for the name of a compiler.  With a prefix
+argument, prompts only for the name of a compiler that supports
+execution."
   (interactive
-   (let* ((lang (or compiler-explorer--language-data
-                    (user-error "Not in a compiler-explorer session")))
-          (default (plist-get lang :defaultCompiler))
-          (compilers (mapcar (lambda (c) `(,(plist-get c :name)
-                                           ,(plist-get c :id)
-                                           ,(plist-get c :lang)))
-                             (compiler-explorer--compilers))))
-     (list (completing-read "Compiler: " compilers
-                            ;; Only compilers for current language
-                            (pcase-lambda (`(_ _ ,lang-id))
-                              (string= lang-id (plist-get lang :id)))
-                            t
-                            (car (cl-find default compilers
-                                          :test #'string= :key #'cadr))))))
+   (list
+    (or
+     (get-text-property (point) 'compiler-explorer-compiler-id)
+     (let* ((lang (or compiler-explorer--language-data
+                      (user-error "Not in a compiler-explorer session")))
+            (default (plist-get lang :defaultCompiler))
+            (compilers (mapcar (lambda (c) `(,(plist-get c :name)
+                                             ,(plist-get c :id)
+                                             ,(plist-get c :supportsExecute)
+                                             ,(plist-get c :lang)))
+                               (compiler-explorer--compilers))))
+       (completing-read (concat "Compiler"
+                                (when current-prefix-arg " (with execution)")
+                                ": ")
+                        compilers
+                        (pcase-lambda (`(_ _ ,supports-execute ,lang-id))
+                          (and
+                           ;; Only compilers for current language
+                           (string= lang-id (plist-get lang :id))
+                           (or (not current-prefix-arg)
+                               (eq t supports-execute))))
+                        t
+                        (car (cl-find default compilers
+                                      :test #'string= :key #'cadr)))))))
   (unless compiler-explorer--language-data
     (error "Not in a `compiler-explorer' session"))
   (let* ((lang-data compiler-explorer--language-data)

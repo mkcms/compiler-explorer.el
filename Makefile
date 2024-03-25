@@ -4,8 +4,10 @@ ELC := $(FILES:.el=.elc)
 
 SELECTOR ?= .*
 
-ARGS := --batch -Q --eval '(package-initialize)'                              \
-	    --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
+PACKAGE_INIT := -Q --eval '(package-initialize)'                              \
+            --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
+
+ARGS := --batch ${PACKAGE_INIT}
 
 COMPILE_ARGS := --eval '(progn                                                \
 	(unless (package-installed-p (quote request))                         \
@@ -29,6 +31,11 @@ compile: $(ELC)
 check: ${ELC}
 	${emacs} ${ARGS} -L . -l compiler-explorer -l compiler-explorer-test  \
 	      --eval '(ert-run-tests-batch-and-exit "${SELECTOR}")'
+
+# Run emacs -Q with packages installed and compiler-explorer loaded
+_baremacs:
+	${emacs} ${PACKAGE_INIT}                                              \
+                -L . -l compiler-explorer -l compiler-explorer-test
 
 readme-to-el:
 	sed README.md -r                                                      \
