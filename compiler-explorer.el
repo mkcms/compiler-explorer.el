@@ -667,6 +667,7 @@ It must have been created with `compiler-explorer--current-session'."
     (when current-session
       (ring-insert compiler-explorer--session-ring current-session))
     (with-temp-file compiler-explorer-sessions-file
+      (insert ";; Auto-generated file; don't edit -*- mode: lisp-data -*-\n")
       (print (ring-elements compiler-explorer--session-ring)
              (current-buffer)))))
 
