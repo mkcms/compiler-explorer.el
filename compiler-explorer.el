@@ -456,17 +456,17 @@ output buffer."
                  #'compiler-explorer-show-output)
                map))))
 
-(defvar compiler-explorer--mode-line-format
-  `(:eval (compiler-explorer--mode-line-format)))
-(put 'compiler-explorer--mode-line-format 'risky-local-variable t)
-
-(add-to-list 'mode-line-misc-info
-             '(compiler-explorer-mode
-               (" [" compiler-explorer--mode-line-format "] ")))
+(defun compiler-explorer--header-line-format-source ()
+  "Get mode line construct for displaying header line in source buffer."
+  `(
+    (:eval (compiler-explorer--mode-line-format))
+    ))
 
 (defun compiler-explorer--header-line-format-compiler ()
   "Get mode line construct for displaying header line in compilation buffers."
   `(
+    (:eval (compiler-explorer--mode-line-format))
+    " | "
     ,(propertize
       (plist-get compiler-explorer--compiler-data :name)
       'mouse-face 'header-line-highlight
@@ -503,6 +503,8 @@ output buffer."
 (defun compiler-explorer--header-line-format-executor ()
   "Get mode line construct for displaying header line in execution buffers."
   `(
+    (:eval (compiler-explorer--mode-line-format))
+    " | "
     ,(propertize
       (format "Input: %s chars" (length compiler-explorer--execution-input))
       'mouse-face 'header-line-highlight
@@ -1007,6 +1009,9 @@ end, with the source buffer as current."
       (add-hook 'after-change-functions #'compiler-explorer--after-change nil t)
       (compiler-explorer-mode +1)
       (save-current-buffer (compiler-explorer-set-compiler compiler))
+
+      (setq header-line-format
+            `(:eval (compiler-explorer--header-line-format-source)))
 
       (when compiler-explorer-make-temp-file
         (setq compiler-explorer--project-dir
