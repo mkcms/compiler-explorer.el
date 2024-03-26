@@ -55,5 +55,10 @@ readme-to-el:
 	&& ${emacs} -Q --batch  compiler-explorer.el                          \
 	    --eval ${FILL_COMMENTARY}
 
+update-copyright-years:
+	year=`date +%Y`;                                                      \
+	sed -i *.el *.md -r                                                   \
+	  -e 's/Copyright \(C\) ([0-9]+)(-[0-9]+)?/Copyright (C) \1-'$$year'/'
+
 clean:
 	rm -f *.elc

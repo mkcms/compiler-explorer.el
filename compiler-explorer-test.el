@@ -1,6 +1,6 @@
 ;;; compiler-explorer-test.el --- Tests for compiler-explorer  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2020  Michał Krzywkowski
+;; Copyright (C) 2020-2024  Michał Krzywkowski
 
 ;; Author: Michał Krzywkowski <k.michal@zoho.com>
 ;; Keywords: tests
