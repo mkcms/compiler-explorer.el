@@ -910,6 +910,14 @@ See `compiler-explorer-layouts' for available layouts."
 
 (defvar compiler-explorer--last-layout 0)
 
+(defcustom compiler-explorer-dedicate-windows t
+  "Make all windows dedicated to their buffers.
+If non-nil, all compiler explorer windows will be bound to the
+buffers they are displaying via `set-window-dedicated-p' and
+other, unrelated buffers will not be displayable in these
+windows."
+  :type 'boolean)
+
 (defun compiler-explorer-layout (&optional layout)
   "Layout current frame.
 Interactively, applies layout defined in variable
@@ -924,31 +932,36 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
         (when (eq last-command #'compiler-explorer-layout)
           (1+ compiler-explorer--last-layout)))))
   (cl-labels
-      ((do-it
-        (spec)
-        (pcase-exhaustive spec
-          ((and (pred numberp) n)
-           (do-it (nth n compiler-explorer-layouts)))
-          ('source (set-window-buffer (selected-window)
-                                      compiler-explorer--buffer))
-          ('asm (set-window-buffer (selected-window)
-                                   compiler-explorer--compiler-buffer))
-          ('output (set-window-buffer
-                    (selected-window)
-                    (get-buffer-create compiler-explorer--output-buffer)))
-          ('exe (set-window-buffer
-                 (selected-window)
-                 (get-buffer-create compiler-explorer--exe-output-buffer)))
-          (`(,left . ,right)
-           (let ((right-window (split-window-right)))
-             (do-it left)
-             (with-selected-window right-window
-               (do-it right))))
-          (`[,upper ,lower]
-           (let ((lower-window (split-window-vertically)))
-             (do-it upper)
-             (with-selected-window lower-window
-               (do-it lower)))))))
+      ((override-window-buffer
+         (window buffer)
+         (set-window-buffer window buffer)
+         (when compiler-explorer-dedicate-windows
+           (set-window-dedicated-p window t)))
+       (do-it
+         (spec)
+         (pcase-exhaustive spec
+           ((and (pred numberp) n)
+            (do-it (nth n compiler-explorer-layouts)))
+           ('source (override-window-buffer (selected-window)
+                                            compiler-explorer--buffer))
+           ('asm (override-window-buffer (selected-window)
+                                         compiler-explorer--compiler-buffer))
+           ('output (override-window-buffer
+                     (selected-window)
+                     (get-buffer-create compiler-explorer--output-buffer)))
+           ('exe (override-window-buffer
+                  (selected-window)
+                  (get-buffer-create compiler-explorer--exe-output-buffer)))
+           (`(,left . ,right)
+            (let ((right-window (split-window-right)))
+              (do-it left)
+              (with-selected-window right-window
+                (do-it right))))
+           (`[,upper ,lower]
+            (let ((lower-window (split-window-vertically)))
+              (do-it upper)
+              (with-selected-window lower-window
+                (do-it lower)))))))
     (or layout (setq layout compiler-explorer-default-layout))
     (when (numberp layout)
       (setq layout (% layout (length compiler-explorer-layouts)))
