@@ -1,3 +1,29 @@
+2024-03-28  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.3.0
+
+	- The source buffer now has a header line, with buttons to start a
+	new session and to switch layouts.
+
+	- Windows are now dedicated to their buffers during CE session.
+	This is customizable via `compiler-explorer-dedicate-windows'.
+
+	- The compilation/execution status is now displayed in the header
+	line instead of the mode line, as it was often hidden on smaller
+	screens.
+
+	- Execution support is now detected for compilers.  If a compiler
+	does not support execution, a proper message will now be displayed
+	in the execution output buffer.  The previous behavior was to
+	silently ignore this, and the user was not informed of that.
+	`compiler-explorer-set-compiler' can now be called interactively
+	with a prefix argument to select a compiler from the list of
+	compilers that support execution.
+
+	- The sessions file now uses `lisp-data-mode'.
+
+	- Byte compilations errors/warnings were fixed.
+
 2022-11-08  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.2.0
