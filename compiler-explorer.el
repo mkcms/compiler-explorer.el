@@ -507,7 +507,7 @@ output buffer."
                   #'compiler-explorer-set-compiler)
                 map)
       'help-echo "mouse-1: Select compiler")
-    " "
+    " | "
     ,(propertize
       (format "Libs: %s"  (length compiler-explorer--selected-libraries))
       'mouse-face 'header-line-highlight
@@ -523,8 +523,8 @@ output buffer."
                          "\n\n"
                          "mouse-1: Add library\n"
                          "mouse-2: Remove library\n"))
-    " "
-    ,(propertize (format "Arguments: '%s'" compiler-explorer--compiler-arguments)
+    " | "
+    ,(propertize (format "Args: '%s'" compiler-explorer--compiler-arguments)
                  'mouse-face 'header-line-highlight
                  'keymap (let ((map (make-keymap)))
                            (define-key map [header-line mouse-1]
@@ -545,9 +545,9 @@ output buffer."
                   #'compiler-explorer-set-input)
                 map)
       'help-echo "mouse-1: Set program input")
-    " "
+    " | "
     ,(propertize
-      (format "Arguments: '%s'" compiler-explorer--execution-arguments)
+      (format "Args: '%s'" compiler-explorer--execution-arguments)
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
                 (define-key map [header-line mouse-1]
