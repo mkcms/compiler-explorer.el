@@ -16,12 +16,23 @@ COMPILE_ARGS := --eval '(progn                                                \
 	  (package-install (quote request))))'
 
 # Sexp to fill paragraphs in the commentary section.
-FILL_COMMENTARY := '(progn                                                    \
+FILL_COMMENTARY := --eval '(progn                                             \
 	(delete-trailing-whitespace)                                          \
         (setq fill-column 74)                                                 \
 	(fill-individual-paragraphs (search-forward "Commentary:")            \
 	                            (search-forward "Code:"))                 \
 	(save-buffer))'
+
+KEYMAP := --eval '(dolist (elt                                                \
+        `((,(kbd "<f2> <f2>") . compiler-explorer)                            \
+          (,(kbd "<f2> p") . compiler-explorer-previous-session)              \
+          (,(kbd "<f2> n") . compiler-explorer-new-session)                   \
+          (,(kbd "<f2> c") . compiler-explorer-set-compiler)                  \
+          (,(kbd "<f2> a") . compiler-explorer-set-compiler-args)             \
+          (,(kbd "<f2> l") . compiler-explorer-layout)                        \
+          (,(kbd "<f2> L") . compiler-explorer-make-link)                     \
+          (,(kbd "<f2> e") . compiler-explorer-show-output)))                 \
+  (global-set-key (car elt) (cdr elt)))'
 
 compile: $(ELC)
 
@@ -34,7 +45,7 @@ check: ${ELC}
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
 _baremacs:
-	${emacs} ${PACKAGE_INIT}                                              \
+	${emacs} ${PACKAGE_INIT} ${KEYMAP}                                    \
                 -L . -l compiler-explorer -l compiler-explorer-test
 
 readme-to-el:
@@ -52,8 +63,7 @@ readme-to-el:
 	&& echo && cat commentary.txt && echo                                 \
 	&& sed '/^;;; Code:/,//p;d' compiler-explorer.el ) > changed.txt      \
 	&& rm commentary.txt && mv changed.txt compiler-explorer.el           \
-	&& ${emacs} -Q --batch  compiler-explorer.el                          \
-	    --eval ${FILL_COMMENTARY}
+	&& ${emacs} -Q --batch ${FILL_COMMENTARY} compiler-explorer.el
 
 update-copyright-years:
 	year=`date +%Y`;                                                      \
