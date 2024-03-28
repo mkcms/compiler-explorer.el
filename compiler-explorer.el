@@ -456,10 +456,42 @@ output buffer."
                  #'compiler-explorer-show-output)
                map))))
 
+(defvar compiler-explorer--last-layout)
+(defvar compiler-explorer-layouts)
+
 (defun compiler-explorer--header-line-format-source ()
   "Get mode line construct for displaying header line in source buffer."
   `(
     (:eval (compiler-explorer--mode-line-format))
+    " | "
+    ,(propertize
+      (plist-get compiler-explorer--language-data :name)
+      'mouse-face 'header-line-highlight
+      'keymap (let ((map (make-keymap)))
+                (define-key map [header-line mouse-1]
+                            #'compiler-explorer-new-session)
+                map)
+      'help-echo "mouse-1: New session")
+    " | "
+    ,(propertize
+      (format "Layout: %d" compiler-explorer--last-layout)
+      'mouse-face 'header-line-highlight
+      'keymap (let ((map (make-keymap)))
+                (define-key map [header-line mouse-1]
+                            (lambda ()
+                              (interactive)
+                              (compiler-explorer-layout
+                               (1+ compiler-explorer--last-layout))))
+                (define-key map [header-line mouse-2]
+                            (lambda ()
+                              (interactive)
+                              (compiler-explorer-layout
+                               (if (zerop compiler-explorer--last-layout)
+                                   (1- (length compiler-explorer-layouts))
+                                 (1- compiler-explorer--last-layout)))))
+                map)
+      'help-echo (concat "mouse-1: Next layout\n"
+                         "mouse-2: Previous layout"))
     ))
 
 (defun compiler-explorer--header-line-format-compiler ()
