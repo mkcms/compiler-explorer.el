@@ -1007,6 +1007,10 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
     (when (numberp layout)
       (setq layout (% layout (length compiler-explorer-layouts)))
       (setq compiler-explorer--last-layout layout))
+    (when (window-dedicated-p)
+      (unless compiler-explorer-mode
+        (select-window (split-window-horizontally)))
+      (set-window-dedicated-p (selected-window) nil))
     (delete-other-windows)
     (do-it layout)
     (balance-windows)))
