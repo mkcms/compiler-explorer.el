@@ -216,7 +216,8 @@ with `json-parse', and a message is displayed.")
                                                       :intel t
                                                       :labels t
                                                       :libraryCode t
-                                                      :trim nil)
+                                                      :trim nil
+                                                      :debugCalls t)
   "Compiler output filters."
   :type '(plist :key-type (choice
                            (const :tag "Compile to binary" :binary)
@@ -226,7 +227,8 @@ with `json-parse', and a message is displayed.")
                            (const :tag "Intel ASM syntax" :intel)
                            (const :tag "Unused labels" :labels)
                            (const :tag "Library code" :libraryCode)
-                           (const :tag "Trim whitespace" :trim))
+                           (const :tag "Trim whitespace" :trim)
+                           (const :tag "Debug intrinsics" :debugCalls))
                 :value-type boolean))
 
 (defun compiler-explorer--output-filters ()
