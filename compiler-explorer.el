@@ -295,6 +295,44 @@ This calls `compiler-explorer--handle-compilation-response' and
 
 (defvar compiler-explorer--project-dir)
 
+;; TODO: This variable is present only because in Emacs-26
+;; `replace-buffer-contents' does not take optional arguments that allow
+;; controlling performance.
+;;
+;; It should be removed when we set minimum required version to Emacs-27 or
+;; later.
+(defcustom compiler-explorer-replace-insert-nondestructively 25000
+  "Replace buffer contents nondestructively if it's size is less than this.
+
+When handling compilation response, the disassembled code is
+inserted into a temporary buffer; if the size of this temporary
+buffer is less than this, and if the size of the current
+disassembly buffer is less than this value, the contents of the
+current disassembly buffer are replaced with the contents of the
+temporary buffer with `replace-buffer-contents'.  This is slow
+for large buffers, but has the advantage of properly preserving
+point.
+
+If the size of any of the two buffers is larger than this, the
+contents are replaced destructively and point is not preserved."
+  :type 'integer)
+
+(defun compiler-explorer--replace-buffer-contents (target source)
+  "Replace contents of buffer TARGET with SOURCE."
+  (let ((limit compiler-explorer-replace-insert-nondestructively))
+    (with-current-buffer target
+      (let ((buffer-read-only nil))
+        ;; We need to remove all overlays applied by ansi-color first,
+        ;; otherwise sometimes `replace-buffer-contents' will improperly merge
+        ;; the existing ANSI-coded regions with the new text.
+        (delete-all-overlays)
+
+        (if (and (< (buffer-size target) limit)
+                 (< (buffer-size source) limit))
+            (replace-buffer-contents source)
+          (erase-buffer)
+          (insert-buffer-substring source))))))
+
 (cl-defun compiler-explorer--handle-compilation-response
     (&key data &allow-other-keys)
   "Handle compilation response contained in DATA."
@@ -302,28 +340,27 @@ This calls `compiler-explorer--handle-compilation-response' and
     (let ((compiler (get-buffer compiler-explorer--compiler-buffer))
           (output (get-buffer-create compiler-explorer--output-buffer)))
       (with-current-buffer compiler
-        (let ((buffer-read-only nil))
-          (erase-buffer)
+        (with-temp-buffer
           (insert (mapconcat (lambda (line) (plist-get line :text)) asm "\n"))
+          (compiler-explorer--replace-buffer-contents compiler (current-buffer)))
 
           ;; Make the ASM view more like godbolt.org.
           ;; TODO: this should be only set once - when this buffer is created.
-          (setq truncate-lines t)))
+        (setq truncate-lines t))
 
       ;; Update output buffer
       (with-current-buffer output
-        (let ((buffer-read-only nil))
-          (erase-buffer)
-          (save-excursion
-            (insert (ansi-color-apply
-                     (mapconcat (lambda (line) (plist-get line :text))
-                                stdout "\n"))
-                    "\n")
-            (insert (ansi-color-apply
-                     (mapconcat (lambda (line) (plist-get line :text))
-                                stderr "\n"))
-                    "\n")
-            (insert (format "Compiler exited with code %s" code))))
+        (with-temp-buffer
+          (insert (ansi-color-apply
+                   (mapconcat (lambda (line) (plist-get line :text))
+                              stdout "\n"))
+                  "\n")
+          (insert (ansi-color-apply
+                   (mapconcat (lambda (line) (plist-get line :text))
+                              stderr "\n"))
+                  "\n")
+          (insert (format "Compiler exited with code %s" code))
+          (compiler-explorer--replace-buffer-contents output (current-buffer)))
 
         (setq buffer-read-only t)
         (unless (eq major-mode 'compilation-mode)
@@ -391,9 +428,9 @@ output buffer."
       (setq buffer-undo-list t)
       (setq header-line-format
             `(:eval (compiler-explorer--header-line-format-executor)))
-      (let ((buffer-read-only nil))
-        (erase-buffer)
-        (save-excursion
+      (let ((buffer-read-only nil)
+            (buf (current-buffer)))
+        (with-temp-buffer
           (insert "Program stdout:\n")
           (insert (mapconcat (lambda (line) (plist-get line :text))
                              stdout "\n")
@@ -403,7 +440,8 @@ output buffer."
                              stderr "\n")
                   "\n")
           (insert (format "Program exited with code %s" code))
-          (ansi-color-apply-on-region (point-min) (point-max)))))))
+          (compiler-explorer--replace-buffer-contents buf (current-buffer)))
+        (ansi-color-apply-on-region (point-min) (point-max))))))
 
 (defun compiler-explorer--mode-line-format ()
   "Get the mode line format used in compiler explorer mode."
