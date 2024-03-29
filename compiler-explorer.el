@@ -326,6 +326,7 @@ contents are replaced destructively and point is not preserved."
         ;; otherwise sometimes `replace-buffer-contents' will improperly merge
         ;; the existing ANSI-coded regions with the new text.
         (delete-all-overlays)
+        (set-text-properties (point-min) (point-max) nil)
 
         (if (and (< (buffer-size target) limit)
                  (< (buffer-size source) limit))
