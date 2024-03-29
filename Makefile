@@ -45,6 +45,7 @@ check: ${ELC}
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
 _baremacs:
+	rm -f test-sessions.el;                                               \
 	${emacs} ${PACKAGE_INIT} ${KEYMAP}                                    \
                 -L . -l compiler-explorer -l compiler-explorer-test
 

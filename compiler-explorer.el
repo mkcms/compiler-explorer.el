@@ -749,9 +749,13 @@ It must have been created with `compiler-explorer--current-session'."
 
 ;; User commands & modes
 
+(defvar compiler-explorer-mode-map (make-sparse-keymap)
+  "Keymap used in `compiler-explorer-mode'.")
+
 (define-minor-mode compiler-explorer-mode
   "Minor mode used in compiler-explorer buffers."
   :lighter " CE"
+  :keymap compiler-explorer-mode-map
   (cond
    (compiler-explorer-mode
     (add-hook 'kill-buffer-hook #'compiler-explorer--cleanup nil t)
@@ -761,6 +765,68 @@ It must have been created with `compiler-explorer--current-session'."
     (remove-hook 'kill-buffer-hook #'compiler-explorer--cleanup t)
     (remove-hook 'project-find-functions
                  #'compiler-explorer--project-find-function t))))
+
+(defun compiler-explorer--define-menu ()
+  "Define a menu in the menu bar for `compiler-explorer' commands."
+  (easy-menu-define compiler-explorer-menu
+    compiler-explorer-mode-map "Compiler Explorer"
+    `("Compiler Explorer"
+      ["Previous session" compiler-explorer-previous-session]
+      ("New session"
+       ,@(mapcar
+          (lambda (lang)
+            (vector (plist-get lang :name)
+                    (lambda ()
+                      (interactive)
+                      (compiler-explorer-new-session (plist-get lang :name)))))
+          (compiler-explorer--languages)))
+      "--"
+      ("Compiler"
+       ,@(mapcar
+          (lambda (comp)
+            (vector comp
+                    (lambda ()
+                      (interactive)
+                      (compiler-explorer-set-compiler comp))))
+          (cl-loop for compiler across (compiler-explorer--compilers)
+                   for lang = (plist-get compiler :lang)
+                   for name = (plist-get compiler :name)
+                   with curr-lang = (plist-get compiler-explorer--language-data :id)
+                   if (string= lang curr-lang) collect name)))
+      ["Set compilation arguments" compiler-explorer-set-compiler-args]
+      ("Add library"
+       ,@(cl-reduce
+          #'nconc
+          (mapcar
+           (lambda (lib)
+             (mapcar
+              (lambda (version)
+                (vector
+                 (format "%s %s"
+                         (plist-get lib :name) (plist-get version :version))
+                 (lambda ()
+                   (interactive)
+                   (compiler-explorer-add-library
+                    (plist-get lib :id) (plist-get version :id)))
+                 :enable `(null (assoc ,(plist-get lib :id)
+                                       compiler-explorer--selected-libraries))))
+              (plist-get lib :versions)))
+           (compiler-explorer--libraries
+            (plist-get compiler-explorer--language-data :id)))))
+      ("Remove library"
+       ,@(mapcar
+          (pcase-lambda (`(,library-id . ,version-id))
+            (vector (format "%s %s" library-id version-id)
+                    (lambda ()
+                      (interactive)
+                      (compiler-explorer-remove-library library-id))))
+          compiler-explorer--selected-libraries))
+      "--"
+      ["Set execution arguments" compiler-explorer-set-execution-args]
+      ["Set execution input" compiler-explorer-set-input]
+      "--"
+      ["Next layout" compiler-explorer-layout]
+      ["Copy link to this session" compiler-explorer-make-link])))
 
 (defun compiler-explorer-show-output ()
   "Show compiler stdout&stderr buffer."
@@ -901,7 +967,10 @@ execution."
      (cdr (assoc res candidates))))
   ;; TODO: check if arguments make sense
   (push (cons id version-id) compiler-explorer--selected-libraries)
-  (compiler-explorer--request-async))
+  (compiler-explorer--request-async)
+
+  ;; Repopulate list of libraries to remove
+  (compiler-explorer--define-menu))
 
 (defun compiler-explorer-remove-library (id)
   "Remove library with ID.
@@ -914,7 +983,10 @@ It must have previously been added with
   (setq compiler-explorer--selected-libraries
         (delq (assoc id compiler-explorer--selected-libraries)
               compiler-explorer--selected-libraries))
-  (compiler-explorer--request-async))
+  (compiler-explorer--request-async)
+
+  ;; Repopulate list of libraries to remove
+  (compiler-explorer--define-menu))
 
 (defun compiler-explorer-previous-session ()
   "Cycle between previous sessions, latest first."
@@ -1111,6 +1183,8 @@ end, with the source buffer as current."
               (expand-file-name (concat "source" (aref extensions 0))
                                 compiler-explorer--project-dir))
         (let ((save-silently t)) (save-buffer)))
+
+      (compiler-explorer--define-menu)
 
       (add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
 
