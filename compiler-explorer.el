@@ -729,7 +729,8 @@ It must have been created with `compiler-explorer--current-session'."
     (setq compiler-explorer--selected-libraries libs)
     (compiler-explorer-set-compiler-args args)
     (compiler-explorer-set-execution-args exe-args)
-    (compiler-explorer-set-input input)))
+    (compiler-explorer-set-input input)
+    (compiler-explorer--define-menu)))
 
 (defvar compiler-explorer--last-session nil)
 
@@ -791,14 +792,16 @@ It must have been created with `compiler-explorer--current-session'."
           (cl-loop for compiler across (compiler-explorer--compilers)
                    for lang = (plist-get compiler :lang)
                    for name = (plist-get compiler :name)
-                   with curr-lang = (plist-get compiler-explorer--language-data :id)
-                   if (string= lang curr-lang) collect name)))
+                   with curr = (plist-get compiler-explorer--language-data :id)
+                   if (string= lang curr) collect name)))
       ["Set compilation arguments" compiler-explorer-set-compiler-args]
       ("Add library"
-       ,@(cl-reduce
-          #'nconc
-          (mapcar
-           (lambda (lib)
+       ,@(mapcar
+          (lambda (lib)
+            (cl-list*
+             (plist-get lib :name)
+             :enable `(null (assoc ,(plist-get lib :id)
+                                   compiler-explorer--selected-libraries))
              (mapcar
               (lambda (version)
                 (vector
@@ -807,13 +810,12 @@ It must have been created with `compiler-explorer--current-session'."
                  (lambda ()
                    (interactive)
                    (compiler-explorer-add-library
-                    (plist-get lib :id) (plist-get version :id)))
-                 :enable `(null (assoc ,(plist-get lib :id)
-                                       compiler-explorer--selected-libraries))))
-              (plist-get lib :versions)))
-           (compiler-explorer--libraries
-            (plist-get compiler-explorer--language-data :id)))))
+                    (plist-get lib :id) (plist-get version :id)))))
+              (plist-get lib :versions))))
+          (compiler-explorer--libraries
+           (plist-get compiler-explorer--language-data :id))))
       ("Remove library"
+       :enable (not (null compiler-explorer--selected-libraries))
        ,@(mapcar
           (pcase-lambda (`(,library-id . ,version-id))
             (vector (format "%s %s" library-id version-id)
