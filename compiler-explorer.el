@@ -850,6 +850,24 @@ It must have been created with `compiler-explorer--current-session'."
       ["Set execution arguments" compiler-explorer-set-execution-args]
       ["Set execution input" compiler-explorer-set-input]
       "--"
+      ("Output filters"
+       ,@(cl-loop
+          for (key v) on compiler-explorer-output-filters by #'cddr
+          with name-alist =
+          (cl-loop for elt in
+                   (cdaddr
+                    (get 'compiler-explorer-output-filters 'custom-type))
+                   collect (cons (car (last elt)) (car (last elt 2))))
+          collect (vector (or (cdr (assoc key name-alist)))
+                          `(lambda ()
+                             (interactive)
+                             (setq compiler-explorer-output-filters
+                                   (plist-put compiler-explorer-output-filters
+                                              ,key (not ,v)))
+                             (compiler-explorer--request-async)
+                             (compiler-explorer--define-menu))
+                          :style 'toggle
+                          :selected v)))
       ["Next layout" compiler-explorer-layout]
       ["Copy link to this session" compiler-explorer-make-link])))
 
