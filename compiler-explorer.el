@@ -171,7 +171,9 @@ proper headers."
 
 (defvar compiler-explorer--selected-libraries nil
   "Alist of libraries for current session.
-Keys are library ids, values are versions.")
+Keys are library ids, values are lists (VERSION ENTRY), where
+VERSION is the id string of the version and ENTRY is the library
+entry from `compiler-explorer--libraries'.")
 
 (defvar compiler-explorer--compiler-arguments ""
   "Arguments for the compiler.")
@@ -280,7 +282,7 @@ This calls `compiler-explorer--handle-compilation-response' and
                        :filters ,(compiler-explorer--output-filters)
                        :tools []
                        :libraries [,@(mapcar
-                                      (pcase-lambda (`(,id . ,version))
+                                      (pcase-lambda (`(,id ,version ,_))
                                         `(:id ,id :version ,version))
                                       compiler-explorer--selected-libraries)])
                       :allowStoreCodeDebug :json-false)))
@@ -556,14 +558,22 @@ output buffer."
                 (define-key map [header-line mouse-1] #'compiler-explorer-add-library)
                 (define-key map [header-line mouse-2] #'compiler-explorer-remove-library)
                 map)
-      'help-echo (concat "Libraries:\n"
-                         (mapconcat (pcase-lambda (`(,name . ,vid))
-                                      (concat name " " vid))
-                                    compiler-explorer--selected-libraries
-                                    "\n")
-                         "\n\n"
-                         "mouse-1: Add library\n"
-                         "mouse-2: Remove library\n"))
+      'help-echo (concat
+                  "Libraries:\n"
+                  (mapconcat
+                   (pcase-lambda (`(,_ ,vid ,entry))
+                     (format "%s %s"
+                             (plist-get entry :name)
+                             (cl-loop with elems = (plist-get entry :versions)
+                                      for version across elems
+                                      for id = (plist-get version :id)
+                                      when (string= id vid)
+                                      return (plist-get version :version))))
+                   compiler-explorer--selected-libraries
+                   "\n")
+                  "\n\n"
+                  "mouse-1: Add library\n"
+                  "mouse-2: Remove library\n"))
     " | "
     ,(propertize (format "Args: '%s'" compiler-explorer--compiler-arguments)
                  'mouse-face 'header-line-highlight
@@ -700,7 +710,14 @@ This allows navigating to errors in source code from that buffer."
         (insert-file-contents compiler-explorer-sessions-file)
         (let ((elts (read (current-buffer))))
           (dolist (e elts)
-            (ring-insert ring e)))))
+            (unless (proper-list-p (car (plist-get e :libs)))
+              (display-warning
+               'compiler-explorer
+               "Refusing to load an incompatible session entry from older version"
+               :warning)
+              (setq e nil))
+            (when e
+              (ring-insert ring e))))))
     ring))
 
 (defun compiler-explorer--current-session ()
@@ -817,8 +834,14 @@ It must have been created with `compiler-explorer--current-session'."
       ("Remove library"
        :enable (not (null compiler-explorer--selected-libraries))
        ,@(mapcar
-          (pcase-lambda (`(,library-id . ,version-id))
-            (vector (format "%s %s" library-id version-id)
+          (pcase-lambda (`(,library-id ,version-id ,entry))
+            (vector (format "%s %s"
+                            (plist-get entry :name)
+                            (cl-loop with elems = (plist-get entry :versions)
+                                     for version across elems
+                                     for id = (plist-get version :id)
+                                     when (string= id version-id)
+                                     return (plist-get version :version)))
                     (lambda ()
                       (interactive)
                       (compiler-explorer-remove-library library-id))))
@@ -967,9 +990,21 @@ execution."
                   (null (assoc id compiler-explorer--selected-libraries)))
                 t)))
      (cdr (assoc res candidates))))
-  ;; TODO: check if arguments make sense
-  (push (cons id version-id) compiler-explorer--selected-libraries)
-  (compiler-explorer--request-async)
+  (let* ((libentry
+          (cl-loop with lang = (plist-get compiler-explorer--language-data :id)
+                   for lib across (compiler-explorer--libraries lang)
+                   when (string= (plist-get lib :id) id)
+                   return lib))
+         (version-entry
+          (cl-loop for version across (plist-get libentry :versions)
+                   if (string= (plist-get version :id) version-id)
+                   return version)))
+    (unless libentry
+      (error "Library with id %S is invalid for the current language" id))
+    (unless version-entry
+      (error "Version id %S is invalid for library %S" version-id id))
+    (push (list id version-id libentry) compiler-explorer--selected-libraries)
+    (compiler-explorer--request-async))
 
   ;; Repopulate list of libraries to remove
   (compiler-explorer--define-menu))
@@ -979,9 +1014,15 @@ execution."
 It must have previously been added with
 `compiler-explorer-add-library'."
   (interactive
-   (list (completing-read "Remove library: "
-                          compiler-explorer--selected-libraries
-                          nil t)))
+   (let* ((libs-by-name
+           (mapcar (pcase-lambda (`(,_ ,_ ,entry))
+                     (cons (plist-get entry :name) entry))
+                   compiler-explorer--selected-libraries))
+          (choice
+           (completing-read "Remove library: "
+                            (mapcar #'car libs-by-name) nil t))
+          (entry (cdr (assoc choice libs-by-name))))
+     (list (plist-get entry :id))))
   (setq compiler-explorer--selected-libraries
         (delq (assoc id compiler-explorer--selected-libraries)
               compiler-explorer--selected-libraries))
@@ -1097,7 +1138,7 @@ With an optional prefix argument OPEN, open that link in a browser."
           `(
             :id ,(plist-get compiler-explorer--compiler-data :id)
             :libs [,@(mapcar
-                      (pcase-lambda (`(,id . ,version))
+                      (pcase-lambda (`(,id ,version ,_))
                         `(:id ,id :version ,version))
                       compiler-explorer--selected-libraries)]
             :options ,compiler-explorer--compiler-arguments

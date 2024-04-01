@@ -298,7 +298,7 @@ int main(int argc, char** argv) {
     (should (string= compiler-explorer--execution-arguments "1 2 3"))
     (should (string= compiler-explorer--execution-input "test"))
     (should (string= "boost" (caar compiler-explorer--selected-libraries)))
-    (should (string= "174" (cdar compiler-explorer--selected-libraries)))))
+    (should (string= "174" (cadar compiler-explorer--selected-libraries)))))
 
 (provide 'compiler-explorer-test)
 ;;; compiler-explorer-test.el ends here
