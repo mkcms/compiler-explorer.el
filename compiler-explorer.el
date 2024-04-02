@@ -354,16 +354,16 @@ contents are replaced destructively and point is not preserved."
       ;; Update output buffer
       (with-current-buffer output
         (with-temp-buffer
-          (insert (ansi-color-apply
-                   (mapconcat (lambda (line) (plist-get line :text))
-                              stdout "\n"))
+          (insert (mapconcat (lambda (line) (plist-get line :text))
+                             stdout "\n")
                   "\n")
-          (insert (ansi-color-apply
-                   (mapconcat (lambda (line) (plist-get line :text))
-                              stderr "\n"))
+          (insert (mapconcat (lambda (line) (plist-get line :text))
+                             stderr "\n")
                   "\n")
           (insert (format "Compiler exited with code %s" code))
           (compiler-explorer--replace-buffer-contents output (current-buffer)))
+        (let ((buffer-read-only nil))
+          (ansi-color-apply-on-region (point-min) (point-max)))
 
         (setq buffer-read-only t)
         (unless (eq major-mode 'compilation-mode)
