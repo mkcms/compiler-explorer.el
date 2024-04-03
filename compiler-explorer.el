@@ -621,9 +621,10 @@ output buffer."
 (defun compiler-explorer--cleanup ()
   "Kill current session."
   (when (and (buffer-live-p (get-buffer compiler-explorer--buffer))
-             (not (string= (plist-get compiler-explorer--language-data :example)
-                           (with-current-buffer compiler-explorer--buffer
-                             (string-trim (buffer-string))))))
+             (not (string=
+                   (string-trim (plist-get compiler-explorer--language-data :example))
+                   (with-current-buffer compiler-explorer--buffer
+                     (string-trim (buffer-string))))))
     ;; Save last session.  Don't insert it into the ring, as that would make us
     ;; cycle between only 2 sessions when calling
     ;; `compiler-explorer-previous-session'.
