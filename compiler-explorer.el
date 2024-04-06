@@ -63,6 +63,8 @@
 ;;
 ;; M-x `compiler-explorer-layout' cycles between different layouts.
 ;;
+;; M-x `compiler-explorer-exit' kills the current session.
+;;
 ;;
 
 ;;; Code:
@@ -776,6 +778,10 @@ It must have been created with `compiler-explorer--current-session'."
 
 ;; User commands & modes
 
+(defun compiler-explorer--active-p ()
+  "Return non-nil if we're in a `compiler-explorer' session."
+  (bufferp (get-buffer compiler-explorer--buffer)))
+
 (defvar compiler-explorer-mode-map (make-sparse-keymap)
   "Keymap used in `compiler-explorer-mode'.")
 
@@ -878,11 +884,15 @@ It must have been created with `compiler-explorer--current-session'."
                           :style 'toggle
                           :selected v)))
       ["Next layout" compiler-explorer-layout]
-      ["Copy link to this session" compiler-explorer-make-link])))
+      ["Copy link to this session" compiler-explorer-make-link]
+      "--"
+      ["Exit" compiler-explorer-exit])))
 
 (defun compiler-explorer-show-output ()
   "Show compiler stdout&stderr buffer."
   (interactive)
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (display-buffer compiler-explorer--output-buffer))
 
 (defvar compiler-explorer-params-change-hook nil
@@ -899,9 +909,12 @@ VALUE is the new value, a string.
 
 (defun compiler-explorer-set-input (input)
   "Set the input to use as stdin for execution to INPUT, a string."
-  (interactive (list
-                (read-from-minibuffer "Stdin: "
-                                      compiler-explorer--execution-input)))
+  (interactive (list (if (compiler-explorer--active-p)
+                         (read-from-minibuffer
+                          "Stdin: " compiler-explorer--execution-input)
+                       (user-error "Not in a `compiler-explorer' session"))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (setq compiler-explorer--execution-input input)
   (compiler-explorer--request-async)
   (run-hook-with-args 'compiler-explorer-params-change-hook 'input input))
@@ -911,10 +924,14 @@ VALUE is the new value, a string.
 
 (defun compiler-explorer-set-compiler-args (args)
   "Set compilation arguments to the string ARGS and recompile."
-  (interactive (list (read-from-minibuffer
-                      "Compiler arguments: "
-                      compiler-explorer--compiler-arguments
-                      nil nil 'compiler-explorer-set-compiler-args-history)))
+  (interactive (list (if (compiler-explorer--active-p)
+                         (read-from-minibuffer
+                          "Compiler arguments: "
+                          compiler-explorer--compiler-arguments
+                          nil nil 'compiler-explorer-set-compiler-args-history)
+                       (user-error "Not in a `compiler-explorer' session"))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (setq compiler-explorer--compiler-arguments args)
   (compiler-explorer--request-async)
   (run-hook-with-args 'compiler-explorer-params-change-hook
@@ -922,9 +939,13 @@ VALUE is the new value, a string.
 
 (defun compiler-explorer-set-execution-args (args)
   "Set execution arguments to the string ARGS and recompile."
-  (interactive (list (read-from-minibuffer
-                      "Execution arguments: "
-                      compiler-explorer--execution-arguments)))
+  (interactive (list (if (compiler-explorer--active-p)
+                         (read-from-minibuffer
+                          "Execution arguments: "
+                          compiler-explorer--execution-arguments)
+                       (user-error "Not in a `compiler-explorer' session"))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (setq compiler-explorer--execution-arguments args)
   (compiler-explorer--request-async)
   (run-hook-with-args 'compiler-explorer-params-change-hook
@@ -937,30 +958,32 @@ argument, prompts only for the name of a compiler that supports
 execution."
   (interactive
    (list
-    (or
-     (get-text-property (point) 'compiler-explorer-compiler-id)
-     (let* ((lang (or compiler-explorer--language-data
-                      (user-error "Not in a compiler-explorer session")))
-            (default (plist-get lang :defaultCompiler))
-            (compilers (mapcar (lambda (c) `(,(plist-get c :name)
-                                             ,(plist-get c :id)
-                                             ,(plist-get c :supportsExecute)
-                                             ,(plist-get c :lang)))
-                               (compiler-explorer--compilers))))
-       (completing-read (concat "Compiler"
-                                (when current-prefix-arg " (with execution)")
-                                ": ")
-                        compilers
-                        (pcase-lambda (`(_ _ ,supports-execute ,lang-id))
-                          (and
-                           ;; Only compilers for current language
-                           (string= lang-id (plist-get lang :id))
-                           (or (not current-prefix-arg)
-                               (eq t supports-execute))))
-                        t
-                        (car (cl-find default compilers
-                                      :test #'string= :key #'cadr)))))))
-  (unless compiler-explorer--language-data
+    (and
+     (or (compiler-explorer--active-p)
+         (user-error "Not in a `compiler-explorer' session"))
+     (or
+      (get-text-property (point) 'compiler-explorer-compiler-id)
+      (let* ((lang compiler-explorer--language-data)
+             (default (plist-get lang :defaultCompiler))
+             (compilers (mapcar (lambda (c) `(,(plist-get c :name)
+                                              ,(plist-get c :id)
+                                              ,(plist-get c :supportsExecute)
+                                              ,(plist-get c :lang)))
+                                (compiler-explorer--compilers))))
+        (completing-read (concat "Compiler"
+                                 (when current-prefix-arg " (with execution)")
+                                 ": ")
+                         compilers
+                         (pcase-lambda (`(_ _ ,supports-execute ,lang-id))
+                           (and
+                            ;; Only compilers for current language
+                            (string= lang-id (plist-get lang :id))
+                            (or (not current-prefix-arg)
+                                (eq t supports-execute))))
+                         t
+                         (car (cl-find default compilers
+                                       :test #'string= :key #'cadr))))))))
+  (unless (compiler-explorer--active-p)
     (error "Not in a `compiler-explorer' session"))
   (let* ((lang-data compiler-explorer--language-data)
          (lang (plist-get lang-data :id))
@@ -995,8 +1018,9 @@ execution."
 (defun compiler-explorer-add-library (id version-id)
   "Add library ID with VERSION-ID to current compilation."
   (interactive
-   (let* ((lang (or (plist-get compiler-explorer--language-data :id)
-                    (user-error "Not in a compiler-explorer session")))
+   (let* ((lang (or (and (compiler-explorer--active-p)
+                         (plist-get compiler-explorer--language-data :id))
+                    (user-error "Not in a `compiler-explorer' session")))
           (candidates (cl-reduce #'nconc
                                  (mapcar
                                   (lambda (l)
@@ -1017,6 +1041,8 @@ execution."
                   (null (assoc id compiler-explorer--selected-libraries)))
                 t)))
      (cdr (assoc res candidates))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (let* ((libentry
           (cl-loop with lang = (plist-get compiler-explorer--language-data :id)
                    for lib across (compiler-explorer--libraries lang)
@@ -1041,15 +1067,19 @@ execution."
 It must have previously been added with
 `compiler-explorer-add-library'."
   (interactive
-   (let* ((libs-by-name
-           (mapcar (pcase-lambda (`(,_ ,_ ,entry))
-                     (cons (plist-get entry :name) entry))
-                   compiler-explorer--selected-libraries))
-          (choice
-           (completing-read "Remove library: "
-                            (mapcar #'car libs-by-name) nil t))
-          (entry (cdr (assoc choice libs-by-name))))
-     (list (plist-get entry :id))))
+   (if (compiler-explorer--active-p)
+       (let* ((libs-by-name
+               (mapcar (pcase-lambda (`(,_ ,_ ,entry))
+                         (cons (plist-get entry :name) entry))
+                       compiler-explorer--selected-libraries))
+              (choice
+               (completing-read "Remove library: "
+                                (mapcar #'car libs-by-name) nil t))
+              (entry (cdr (assoc choice libs-by-name))))
+         (list (plist-get entry :id)))
+     (user-error "Not in a `compiler-explorer' session")))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (setq compiler-explorer--selected-libraries
         (delq (assoc id compiler-explorer--selected-libraries)
               compiler-explorer--selected-libraries))
@@ -1114,6 +1144,8 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
     (or (and (numberp current-prefix-arg) current-prefix-arg)
         (when (eq last-command #'compiler-explorer-layout)
           (1+ compiler-explorer--last-layout)))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (cl-labels
       ((override-window-buffer
          (window buffer)
@@ -1161,6 +1193,8 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
   "Save URL to current session in the kill ring.
 With an optional prefix argument OPEN, open that link in a browser."
   (interactive "P")
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
   (let* ((compiler
           `(
             :id ,(plist-get compiler-explorer--compiler-data :id)
@@ -1260,6 +1294,13 @@ end, with the source buffer as current."
 
       (pop-to-buffer (current-buffer))
       (run-hooks 'compiler-explorer-new-session-hook))))
+
+(defun compiler-explorer-exit ()
+  "Kill the current session."
+  (interactive)
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
+  (compiler-explorer--cleanup))
 
 (defvar compiler-explorer-hook '(compiler-explorer-layout)
   "Hook run at the end of `compiler-explorer'.

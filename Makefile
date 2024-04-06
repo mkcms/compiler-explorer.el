@@ -31,7 +31,8 @@ KEYMAP := --eval '(dolist (elt                                                \
           (,(kbd "<f2> a") . compiler-explorer-set-compiler-args)             \
           (,(kbd "<f2> l") . compiler-explorer-layout)                        \
           (,(kbd "<f2> L") . compiler-explorer-make-link)                     \
-          (,(kbd "<f2> e") . compiler-explorer-show-output)))                 \
+          (,(kbd "<f2> e") . compiler-explorer-show-output)                   \
+          (,(kbd "<f2> q") . compiler-explorer-exit)))                        \
   (global-set-key (car elt) (cdr elt)))'
 
 compile: $(ELC)
@@ -64,7 +65,7 @@ readme-to-el:
 	&& echo && cat commentary.txt && echo                                 \
 	&& sed '/^;;; Code:/,//p;d' compiler-explorer.el ) > changed.txt      \
 	&& rm commentary.txt && mv changed.txt compiler-explorer.el           \
-	&& ${emacs} -Q --batch ${FILL_COMMENTARY} compiler-explorer.el
+	&& ${emacs} -Q --batch compiler-explorer.el ${FILL_COMMENTARY}
 
 update-copyright-years:
 	year=`date +%Y`;                                                      \
