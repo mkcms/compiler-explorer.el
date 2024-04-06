@@ -513,8 +513,11 @@ output buffer."
       'keymap (let ((map (make-keymap)))
                 (define-key map [header-line mouse-1]
                             #'compiler-explorer-new-session)
+                (define-key map [header-line mouse-2]
+                            #'compiler-explorer-previous-session)
                 map)
-      'help-echo "mouse-1: New session")
+      'help-echo (concat "mouse-1: New session\n"
+                         "mouse-2: Previous session"))
     " | "
     ,(propertize
       (format "Layout: %d" compiler-explorer--last-layout)
