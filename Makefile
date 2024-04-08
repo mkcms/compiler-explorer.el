@@ -8,10 +8,11 @@ PACKAGE_INIT := --eval '(package-initialize)'
 TEST_ARGS := --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
 
 INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
-	(unless (package-installed-p (quote request))                         \
+	(unless (package-installed-p `request)                                \
 	  (push (cons "melpa" "https://melpa.org/packages/") package-archives)\
 	  (package-refresh-contents)                                          \
-	  (package-install (quote request))))'
+	  (package-install `request)                                          \
+	  (package-install (cadr (assoc `eldoc package-archive-contents)))))'
 
 # Sexp to fill paragraphs in the commentary section.
 FILL_COMMENTARY := --eval '(progn                                             \

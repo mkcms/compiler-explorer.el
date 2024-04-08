@@ -6,7 +6,7 @@
 ;; Keywords: c, tools
 ;; Version: 0.3.0
 ;; Homepage: https://github.com/mkcms/compiler-explorer.el
-;; Package-Requires: ((emacs "26.1") (request "0.3.0"))
+;; Package-Requires: ((emacs "26.1") (request "0.3.0") (eldoc "1.15.0"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -77,6 +77,15 @@
 (require 'ring)
 (require 'seq)
 (require 'subr-x)
+
+;; `require'-ing eldoc does not guarantee it is loaded as it is preloaded in
+;; Emacs.
+;;
+;; This hack was stolen from the built-in eglot.el.
+(if (and (< emacs-major-version 28)
+         (not (boundp 'eldoc-documentation-strategy)))
+    (load "eldoc" nil 'nomessage)
+  (require 'eldoc))
 
 (defgroup compiler-explorer nil "Client for compiler-explorer service."
   :group 'tools)
@@ -161,7 +170,8 @@ For all other responses, the behavior is unaltered."
                :sync t
                :params `(("fields" .
                           ,(concat "id,name,lang,compilerType,semver,"
-                                   "extensions,monaco,supportsExecute")))
+                                   "extensions,monaco,supportsExecute,"
+                                   "instructionSet")))
                :headers '(("Accept" . "application/json"))
                :parser #'compiler-explorer--parse-json)))))
 
@@ -175,6 +185,50 @@ For all other responses, the behavior is unaltered."
                :sync t
                :headers '(("Accept" . "application/json"))
                :parser #'compiler-explorer--parse-json)))))
+
+(defvar compiler-explorer--asm-opcode-docs-cache
+  (make-hash-table :test #'equal)
+  "Hash table mapping opcodes to their docs.
+
+Keys are strings of the form \\='ISET:OPCODE\\=', where ISET is the
+compiler's :instructionSet.
+
+Values are strings, which contain the documentation for the
+opcode.  Values can also be `t', which means no
+documentation is available for the key.")
+
+(defun compiler-explorer--asm-opcode-doc (instruction-set opcode callback)
+  "Get documentation for OPCODE in INSTRUCTION-SET and call CALLBACK.
+Opcode should be a string.  INSTRUCTION-SET should be a valid
+:instructionSet of some compiler.
+
+The return value will be:
+- nil if documentation is not available
+- `t' if it is (and callback was called).
+- the symbol \\='async if a request to get that documentation was
+  sent, but the documentation is not available yet."
+  (let* ((key (format "%s:%s" instruction-set opcode))
+         (cache compiler-explorer--asm-opcode-docs-cache)
+         (resp (gethash key cache)))
+    (cond
+     ((stringp resp) (funcall callback resp) t)
+     ((eq resp t) nil)
+     (t
+      (compiler-explorer--request
+        (compiler-explorer--url "asm" instruction-set opcode)
+        :headers '(("Accept" . "application/json"))
+        :error #'ignore
+        :complete (cl-function
+                   (lambda (&key data symbol-status response
+                                 &allow-other-keys)
+                     (cond
+                      ((eq symbol-status 'success)
+                       (funcall callback (plist-get data :tooltip))
+                       (puthash key (plist-get data :tooltip) cache))
+                      ((eq 404 (request-response-status-code response))
+                       (puthash key t cache)))))
+        :parser #'compiler-explorer--parse-json)
+      'async))))
 
 
 ;; Compilation
@@ -365,6 +419,7 @@ contents are replaced destructively and point is not preserved."
           (erase-buffer)
           (insert-buffer-substring source))))))
 
+(defvar compiler-explorer-document-opcodes)
 (cl-defun compiler-explorer--handle-compilation-response
     (&key data &allow-other-keys)
   "Handle compilation response contained in DATA."
@@ -376,8 +431,15 @@ contents are replaced destructively and point is not preserved."
           (insert (mapconcat (lambda (line) (plist-get line :text)) asm "\n"))
           (compiler-explorer--replace-buffer-contents compiler (current-buffer)))
 
-          ;; Make the ASM view more like godbolt.org.
-          ;; TODO: this should be only set once - when this buffer is created.
+        (when compiler-explorer-document-opcodes
+          (add-hook
+           'eldoc-documentation-functions
+           'compiler-explorer--compilation-eldoc-documentation-function nil t)
+          (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
+          (eldoc-mode +1))
+
+        ;; Make the ASM view more like godbolt.org.
+        ;; TODO: this should be only set once - when this buffer is created.
         (setq truncate-lines t))
 
       ;; Update output buffer
@@ -729,6 +791,26 @@ This allows navigating to errors in source code from that buffer."
     (file-name-nondirectory
      (buffer-file-name (get-buffer compiler-explorer--buffer)))))
 
+(defcustom compiler-explorer-document-opcodes t
+  "If non-nil, provide documentation for opcodes in ASM buffers.
+This uses `eldoc' to output documentation for opcodes at point in
+the minibuffer and separate help buffers."
+  :type 'boolean)
+
+(defun compiler-explorer--compilation-eldoc-documentation-function (callback)
+  "Eldoc func for `compiler-explorer' which calls CALLBACK with opcode docs."
+  (when-let ((opcode (thing-at-point 'symbol)))
+    (compiler-explorer--asm-opcode-doc
+     (plist-get compiler-explorer--compiler-data :instructionSet)
+     opcode
+     (lambda (doc)
+       (funcall callback
+                (with-temp-buffer
+                  (text-mode)
+                  (insert doc)
+                  (fill-paragraph)
+                  (buffer-string))
+                :thing opcode)))))
 
 ;; Session management
 

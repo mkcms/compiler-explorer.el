@@ -47,6 +47,19 @@
                           compiler-explorer--last-exe-request))))
       (accept-process-output nil 0.1))))
 
+(defun compiler-explorer-test--help-message ()
+  "Get the documentation string for thing at point."
+  (with-current-buffer compiler-explorer--compiler-buffer
+    (should (memq 'compiler-explorer--compilation-eldoc-documentation-function
+                  eldoc-documentation-functions))
+    (let (msg)
+      (compiler-explorer--compilation-eldoc-documentation-function
+       (lambda (x &rest _more) (setq msg x)))
+      (with-timeout (15 (error "Test timed out"))
+        (while (null msg)
+          (accept-process-output nil 0.1)))
+      msg)))
+
 (defun compiler-explorer-test--insert (string)
   "Erase source buffer then insert STRING and wait until compilation finishes."
   (with-current-buffer compiler-explorer--buffer
@@ -103,6 +116,23 @@
         (should (stringp (plist-get first :id)))
         (should (stringp (plist-get first :version)))))))
 
+(ert-deftest compiler-explorer-api-asm-opcode-docs ()
+  (with-temp-buffer
+    (compiler-explorer--asm-opcode-doc "amd64" "pushq" #'insert)
+    (with-timeout (5 (error "Test timed out"))
+      (while (= 0 (buffer-size))
+        (accept-process-output)))
+    (goto-char (point-min))
+    (should (search-forward "Decrements the stack pointer and then stores"))
+    (should (search-forward "source operand on the top of the stack")))
+  (with-temp-buffer
+    (compiler-explorer--asm-opcode-doc "python" "MAKE_FUNCTION" #'insert)
+    (with-timeout (5 (error "Test timed out"))
+      (while (= 0 (buffer-size))
+        (accept-process-output)))
+    (goto-char (point-min))
+    (should (search-forward "Pushes a new function object on the stack."))))
+
 (ert-deftest compiler-explorer-auto-mode ()
   "Test that major mode is set automatically from language."
   (compiler-explorer-test--with-session "C++" nil
@@ -144,6 +174,40 @@ int bar(int) { return 2; }
     (compiler-explorer-test--wait)
     (should (string-match-p "foo(int):"
                             (compiler-explorer-test--compilation-result)))))
+
+(ert-deftest compiler-explorer-asm-opcode-docs ()
+  "Check that we can see ASM opcode documentation."
+  (compiler-explorer-test--with-session "Assembly" "x86-64 clang (trunk)"
+    (compiler-explorer-set-compiler "x86-64 clang (trunk)")
+
+    (compiler-explorer-test--insert
+"
+foo:
+    xor %rdx, %rax
+    inc %rcx
+    jmpq *%rax
+")
+    (compiler-explorer-test--wait)
+
+    (with-current-buffer compiler-explorer--compiler-buffer
+
+      (goto-char (point-min))
+      (search-forward "xor")
+      (forward-char -1)
+      (should (string-match-p "Performs a bitwise exclusive OR"
+                              (compiler-explorer-test--help-message)))
+
+      (goto-char (point-min))
+      (search-forward "inc")
+      (forward-char -1)
+      (should (string-match-p "Adds 1 to the destination operand"
+                              (compiler-explorer-test--help-message)))
+
+      (goto-char (point-min))
+      (search-forward "jmp")
+      (forward-char -1)
+      (should (string-match-p "Transfers program control to a different point"
+                              (compiler-explorer-test--help-message))))))
 
 (ert-deftest compiler-explorer-setting-compiler-args ()
   "Check that setting arguments works and triggers recompilation."
