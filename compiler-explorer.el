@@ -721,7 +721,8 @@ This allows navigating to errors in source code from that buffer."
         (insert-file-contents compiler-explorer-sessions-file)
         (let ((elts (read (current-buffer))))
           (dolist (e elts)
-            (unless (proper-list-p (car (plist-get e :libs)))
+            (unless (or (null (plist-get e :libs))
+                        (consp (ignore-errors (cddar (plist-get e :libs)))))
               (display-warning
                'compiler-explorer
                "Refusing to load an incompatible session entry from older version"
