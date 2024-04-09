@@ -475,8 +475,8 @@ output buffer."
           (compiler-explorer--replace-buffer-contents buf (current-buffer)))
         (ansi-color-apply-on-region (point-min) (point-max))))))
 
-(defun compiler-explorer--mode-line-format ()
-  "Get the mode line format used in compiler explorer mode."
+(defun compiler-explorer--header-line-format-common ()
+  "Get the mode line template used in compiler explorer mode."
   (let* ((is-exe (eq (current-buffer)
                      (get-buffer compiler-explorer--exe-output-buffer)))
          (resp (if is-exe
@@ -524,7 +524,7 @@ output buffer."
                                          " Show output buffer."))))))))
      'mouse-face 'mode-line-highlight
      'keymap (let ((map (make-keymap)))
-               (define-key map [mode-line mouse-1]
+               (define-key map [header-line mouse-1]
                  #'compiler-explorer-show-output)
                map))))
 
@@ -534,7 +534,7 @@ output buffer."
 (defun compiler-explorer--header-line-format-source ()
   "Get mode line construct for displaying header line in source buffer."
   `(
-    (:eval (compiler-explorer--mode-line-format))
+    (:eval (compiler-explorer--header-line-format-common))
     " | "
     ,(propertize
       (plist-get compiler-explorer--language-data :name)
@@ -572,7 +572,7 @@ output buffer."
 (defun compiler-explorer--header-line-format-compiler ()
   "Get mode line construct for displaying header line in compilation buffers."
   `(
-    (:eval (compiler-explorer--mode-line-format))
+    (:eval (compiler-explorer--header-line-format-common))
     " | "
     ,(propertize
       (plist-get compiler-explorer--compiler-data :name)
@@ -618,7 +618,7 @@ output buffer."
 (defun compiler-explorer--header-line-format-executor ()
   "Get mode line construct for displaying header line in execution buffers."
   `(
-    (:eval (compiler-explorer--mode-line-format))
+    (:eval (compiler-explorer--header-line-format-common))
     " | "
     ,(propertize
       (format "Input: %s chars" (length compiler-explorer--execution-input))
