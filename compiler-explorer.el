@@ -1125,8 +1125,17 @@ It must have previously been added with
   (let ((prev (or compiler-explorer--last-session
                   (ring-remove compiler-explorer--session-ring))))
     (setq compiler-explorer--last-session nil)
-    (compiler-explorer--restore-session prev)
-    (compiler-explorer--request-async)))
+    (condition-case nil
+        (progn
+          (compiler-explorer--restore-session prev)
+          (compiler-explorer--request-async)
+          t)
+      (error
+       (compiler-explorer--cleanup)
+       (setq compiler-explorer--last-session nil)
+       (display-warning
+        'compiler-explorer "Previous session appears to be corrupt" :warning)
+       nil))))
 
 (defvar compiler-explorer-layouts
   '((source . asm)
@@ -1265,22 +1274,8 @@ With an optional prefix argument OPEN, open that link in a browser."
   "Hook run after creating new session.
 The source buffer is current when this hook runs.")
 
-(defun compiler-explorer-new-session (lang &optional compiler)
-  "Create a new compiler explorer session with language named LANG.
-If COMPILER (name or id) is non-nil, set that compiler.
-
-If a session already exists, it is killed and saved to the
-session ring.
-
-Always runs hooks in `compiler-explorer-new-session-hook' at the
-end, with the source buffer as current."
-  (interactive
-   (list (completing-read "Language: "
-                          (mapcar (lambda (lang) (plist-get lang :name))
-                                  (compiler-explorer--languages))
-                          nil t)
-         nil))
-
+(defun compiler-explorer-new-session-1 (lang &optional compiler)
+  "Subr of `compiler-explorer-new-session' that uses given LANG and COMPILER."
   (when (fboundp #'request--callback)
     (advice-add #'request--callback
                 :around
@@ -1329,6 +1324,26 @@ end, with the source buffer as current."
       (pop-to-buffer (current-buffer))
       (run-hooks 'compiler-explorer-new-session-hook))))
 
+(defun compiler-explorer-new-session (lang &optional compiler)
+  "Create a new compiler explorer session with language named LANG.
+If COMPILER (name or id) is non-nil, set that compiler.
+
+If a session already exists, it is killed and saved to the
+session ring.
+
+Always runs hooks in `compiler-explorer-new-session-hook' at the
+end, with the source buffer as current."
+  (interactive
+   (list (completing-read "Language: "
+                          (mapcar (lambda (lang) (plist-get lang :name))
+                                  (compiler-explorer--languages))
+                          nil t)
+         nil))
+  (condition-case err
+      (compiler-explorer-new-session-1 lang compiler)
+    (error (compiler-explorer--cleanup)
+           (signal (car err) (cdr err)))))
+
 (defun compiler-explorer-exit ()
   "Kill the current session."
   (interactive)
@@ -1353,10 +1368,11 @@ The hook `compiler-explorer-hook' is always run at the end."
   (let ((buffer (get-buffer compiler-explorer--buffer)))
     (cond
      (buffer (pop-to-buffer buffer) (compiler-explorer--request-async))
-     ((or compiler-explorer--last-session
-          (not (ring-empty-p compiler-explorer--session-ring)))
-      (compiler-explorer-previous-session))
-     (t (call-interactively #'compiler-explorer-new-session))))
+     ((and (or compiler-explorer--last-session
+               (not (ring-empty-p compiler-explorer--session-ring)))
+           (compiler-explorer-previous-session)))
+     (t
+      (call-interactively #'compiler-explorer-new-session))))
   (run-hooks 'compiler-explorer-hook))
 
 (provide 'compiler-explorer)
