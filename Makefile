@@ -4,12 +4,10 @@ ELC := $(FILES:.el=.elc)
 
 SELECTOR ?= .*
 
-PACKAGE_INIT := -Q --eval '(package-initialize)'                              \
-            --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
+PACKAGE_INIT := --eval '(package-initialize)'
+TEST_ARGS := --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
 
-ARGS := --batch ${PACKAGE_INIT}
-
-COMPILE_ARGS := --eval '(progn                                                \
+INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
 	(unless (package-installed-p (quote request))                         \
 	  (push (cons "melpa" "https://melpa.org/packages/") package-archives)\
 	  (package-refresh-contents)                                          \
@@ -35,19 +33,24 @@ KEYMAP := --eval '(dolist (elt                                                \
           (,(kbd "<f2> q") . compiler-explorer-exit)))                        \
   (global-set-key (car elt) (cdr elt)))'
 
-compile: $(ELC)
+.PHONY: deps
+deps:
+	${emacs} -Q --batch ${INSTALL_DEPENDENCIES}
+
+compile: deps $(ELC)
 
 %.elc: %.el
-	${emacs} ${ARGS} ${COMPILE_ARGS} -L . -f batch-byte-compile $<
+	${emacs} -Q --batch ${PACKAGE_INIT} -L . -f batch-byte-compile $<
 
 check: ${ELC}
-	${emacs} ${ARGS} -L . -l compiler-explorer -l compiler-explorer-test  \
+	${emacs} -Q --batch ${PACKAGE_INIT} ${TEST_ARGS}                      \
+	      -L . -l compiler-explorer -l compiler-explorer-test             \
 	      --eval '(ert-run-tests-batch-and-exit "${SELECTOR}")'
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
-_baremacs:
+_baremacs: ${ELC}
 	rm -f test-sessions.el;                                               \
-	${emacs} ${PACKAGE_INIT} ${KEYMAP}                                    \
+	${emacs} -Q ${PACKAGE_INIT} ${KEYMAP} ${TEST_ARGS}                    \
                 -L . -l compiler-explorer -l compiler-explorer-test
 
 readme-to-el:
