@@ -93,11 +93,11 @@
                          (string= (plist-get c :name) "x86-64 gcc (trunk)"))
                        (compiler-explorer--compilers))))
     (should (stringp (plist-get gcc :id)))
+    (should (memq :supportsExecute gcc))
     (let* ((lang (plist-get gcc :lang))
            (lang-data (seq-find (lambda (l) (string= (plist-get l :id) lang))
                                 (compiler-explorer--languages))))
       (should (stringp lang))
-      (should (memq :supportsExecute lang-data))
       (should lang-data))))
 
 (ert-deftest compiler-explorer-api-libraries ()

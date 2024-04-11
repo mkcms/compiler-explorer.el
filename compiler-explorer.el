@@ -129,6 +129,13 @@ proper headers and caches the request for checking if it's CE-related later."
          (res (apply #'request args)))
     (prog1 res (puthash res t compiler-explorer--requests))))
 
+(defun compiler-explorer--request-sync (what url &rest args)
+  "Perform a :sync `request' for URL, displaying WHAT with progress reporter."
+  (let ((pr (make-progress-reporter what)))
+    (unwind-protect
+        (apply #'compiler-explorer--request url :sync t args)
+      (progress-reporter-done pr))))
+
 (defun compiler-explorer--request-callback-wrapper (oldfun &rest args)
   "Call OLDFUN with ARGS and a workaround for CE.
 
@@ -154,9 +161,11 @@ For all other responses, the behavior is unaltered."
   (or compiler-explorer--languages
       (setq compiler-explorer--languages
             (request-response-data
-             (compiler-explorer--request (compiler-explorer--url "languages")
-               :sync t
-               :params '(("fields" . "all"))
+             (compiler-explorer--request-sync
+               "Fetching list of languages"
+               (compiler-explorer--url "languages")
+               :params `(("fields" . ,(concat "id,name,extensions,example,"
+                                              "defaultCompiler")))
                :headers '(("Accept" . "application/json"))
                :parser #'compiler-explorer--parse-json)))))
 
@@ -166,11 +175,11 @@ For all other responses, the behavior is unaltered."
   (or compiler-explorer--compilers
       (setq compiler-explorer--compilers
             (request-response-data
-             (compiler-explorer--request (compiler-explorer--url "compilers")
-               :sync t
+             (compiler-explorer--request-sync
+               "Fetching list of compilers"
+               (compiler-explorer--url "compilers")
                :params `(("fields" .
-                          ,(concat "id,name,lang,compilerType,semver,"
-                                   "extensions,monaco,supportsExecute,"
+                          ,(concat "id,name,lang,supportsExecute,"
                                    "instructionSet")))
                :headers '(("Accept" . "application/json"))
                :parser #'compiler-explorer--parse-json)))))
@@ -181,8 +190,9 @@ For all other responses, the behavior is unaltered."
   (or (map-elt compiler-explorer--libraries id)
       (setf (map-elt compiler-explorer--libraries id)
             (request-response-data
-             (compiler-explorer--request (compiler-explorer--url "libraries" id)
-               :sync t
+             (compiler-explorer--request-sync
+               (format "Fetching %S libraries" id)
+               (compiler-explorer--url "libraries" id)
                :headers '(("Accept" . "application/json"))
                :parser #'compiler-explorer--parse-json)))))
 
@@ -1375,6 +1385,9 @@ The source buffer is current when this hook runs.")
                         (error "Language %S does not exist" lang)))
          (extensions (plist-get lang-data :extensions)))
     (setq compiler-explorer--language-data lang-data)
+
+    ;; Prefetch
+    (ignore (compiler-explorer--libraries (plist-get lang-data :id)))
 
     (with-current-buffer (generate-new-buffer compiler-explorer--buffer)
       ;; Find major mode by extension
