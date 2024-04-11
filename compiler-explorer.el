@@ -302,7 +302,7 @@ with `json-parse', and a message is displayed.")
                                                       :labels t
                                                       :libraryCode t
                                                       :trim nil
-                                                      :debugCalls t)
+                                                      :debugCalls nil)
   "Compiler output filters."
   :type '(plist :key-type (choice
                            (const :tag "Compile to binary" :binary)
