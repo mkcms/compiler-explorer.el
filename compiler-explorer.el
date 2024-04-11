@@ -846,7 +846,7 @@ the minibuffer and separate help buffers."
   `(
     :lang-name ,(plist-get compiler-explorer--language-data :name)
     :compiler ,(plist-get compiler-explorer--compiler-data :id)
-    :libs ,compiler-explorer--selected-libraries
+    :libs ,(purecopy compiler-explorer--selected-libraries)
     :args ,compiler-explorer--compiler-arguments
     :exe-args ,compiler-explorer--execution-arguments
     :input ,compiler-explorer--execution-input
@@ -864,7 +864,8 @@ It must have been created with `compiler-explorer--current-session'."
         (erase-buffer)
         (insert source)
         (set-buffer-modified-p nil)))
-    (setq compiler-explorer--selected-libraries libs)
+    (pcase-dolist (`(,id ,vid ,_) libs)
+      (compiler-explorer-add-library id vid))
     (compiler-explorer-set-compiler-args args)
     (compiler-explorer-set-execution-args exe-args)
     (compiler-explorer-set-input input)
