@@ -844,14 +844,23 @@ the minibuffer and separate help buffers."
     (ignore-errors
       (with-temp-buffer
         (insert-file-contents compiler-explorer-sessions-file)
-        (let ((elts (read (current-buffer))))
+        (let ((elts (read (current-buffer)))
+              version)
+          (if (and (consp elts) (integerp (car elts)))
+              (setq version (car elts) elts (cdr elts))
+            (setq version 0))
+          (when (> version 1)
+            (error "Session file is incompatible"))
           (dolist (e elts)
+            (setq version (plist-get e :version))
             (unless (or (null (plist-get e :libs))
                         (consp (ignore-errors (cddar (plist-get e :libs)))))
               (display-warning
                'compiler-explorer
                "Refusing to load an incompatible session entry from older version"
                :warning)
+              (setq e nil))
+            (when (and version (> version 1))
               (setq e nil))
             (when e
               (ring-insert ring e))))))
@@ -860,6 +869,7 @@ the minibuffer and separate help buffers."
 (defun compiler-explorer--current-session ()
   "Serialize current session as plist."
   `(
+    :version 1
     :lang-name ,(plist-get compiler-explorer--language-data :name)
     :compiler ,(plist-get compiler-explorer--compiler-data :id)
     :libs ,(purecopy compiler-explorer--selected-libraries)
@@ -873,7 +883,11 @@ the minibuffer and separate help buffers."
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
   (cl-destructuring-bind
-      (&key lang-name compiler libs args exe-args input source) session
+      (&key version lang-name compiler libs args exe-args input source) session
+    (or version (setq version 0))
+    (when (> version 1)
+      (error "Don't know how to restore session version %s" version))
+
     (compiler-explorer-new-session lang-name compiler)
     (with-current-buffer (get-buffer compiler-explorer--buffer)
       (let ((inhibit-modification-hooks t))
@@ -899,8 +913,10 @@ It must have been created with `compiler-explorer--current-session'."
       (ring-insert compiler-explorer--session-ring current-session))
     (with-temp-file compiler-explorer-sessions-file
       (insert ";; Auto-generated file; don't edit -*- mode: lisp-data -*-\n")
-      (print (ring-elements compiler-explorer--session-ring)
-             (current-buffer)))))
+      (print
+       (cons 1                          ;version
+             (ring-elements compiler-explorer--session-ring))
+       (current-buffer)))))
 
 
 ;; User commands & modes
