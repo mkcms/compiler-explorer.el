@@ -853,13 +853,6 @@ the minibuffer and separate help buffers."
             (error "Session file is incompatible"))
           (dolist (e elts)
             (setq version (plist-get e :version))
-            (unless (or (null (plist-get e :libs))
-                        (consp (ignore-errors (cddar (plist-get e :libs)))))
-              (display-warning
-               'compiler-explorer
-               "Refusing to load an incompatible session entry from older version"
-               :warning)
-              (setq e nil))
             (when (and version (> version 1))
               (setq e nil))
             (when e
@@ -872,7 +865,8 @@ the minibuffer and separate help buffers."
     :version 1
     :lang-name ,(plist-get compiler-explorer--language-data :name)
     :compiler ,(plist-get compiler-explorer--compiler-data :id)
-    :libs ,(purecopy compiler-explorer--selected-libraries)
+    :libs ,(mapcar (pcase-lambda (`(,id ,vid ,_)) (cons id vid))
+                   compiler-explorer--selected-libraries)
     :args ,compiler-explorer--compiler-arguments
     :exe-args ,compiler-explorer--execution-arguments
     :input ,compiler-explorer--execution-input
@@ -894,7 +888,7 @@ It must have been created with `compiler-explorer--current-session'."
         (erase-buffer)
         (insert source)
         (set-buffer-modified-p nil)))
-    (pcase-dolist (`(,id ,vid ,_) libs)
+    (pcase-dolist (`(,id . ,vid) libs)
       (compiler-explorer-add-library id vid))
     (compiler-explorer-set-compiler-args args)
     (compiler-explorer-set-execution-args exe-args)
