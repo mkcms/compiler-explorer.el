@@ -722,19 +722,24 @@ output buffer."
 
 (defvar compiler-explorer--last-session)
 
-(defun compiler-explorer--cleanup ()
-  "Kill current session."
-  (when (and (buffer-live-p (get-buffer compiler-explorer--buffer))
-             (not (string=
-                   (string-trim (plist-get compiler-explorer--language-data :example))
-                   (with-current-buffer compiler-explorer--buffer
-                     (string-trim (buffer-string))))))
-    ;; Save last session.  Don't insert it into the ring, as that would make us
-    ;; cycle between only 2 sessions when calling
-    ;; `compiler-explorer-previous-session'.
-    ;;
-    ;; Don't save it if it is unmodified from example.
-    (setq compiler-explorer--last-session (compiler-explorer--current-session)))
+(defun compiler-explorer--cleanup (&optional skip-save-session)
+  "Kill current session.
+If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
+  (if (and
+       (not skip-save-session)
+       (buffer-live-p (get-buffer compiler-explorer--buffer))
+       (not (string=
+             (string-trim
+              (plist-get compiler-explorer--language-data :example))
+             (with-current-buffer compiler-explorer--buffer
+               (string-trim (buffer-string))))))
+      ;; Save last session.  Don't insert it into the ring, as that would make us
+      ;; cycle between only 2 sessions when calling
+      ;; `compiler-explorer-previous-session'.
+      ;;
+      ;; Don't save it if it is unmodified from example.
+      (setq compiler-explorer--last-session (compiler-explorer--current-session))
+    (setq compiler-explorer--last-session nil))
 
   ;; Abort last request and cancel the timer for recompilation.
   (when-let ((req compiler-explorer--last-compilation-request))
@@ -744,6 +749,7 @@ output buffer."
     (unless (request-response-done-p req)
       (request-abort req)))
   (setq compiler-explorer--last-compilation-request nil)
+  (setq compiler-explorer--last-exe-request nil)
   (when compiler-explorer--recompile-timer
     (cancel-timer compiler-explorer--recompile-timer)
     (setq compiler-explorer--recompile-timer nil))
@@ -1224,8 +1230,7 @@ It must have previously been added with
           (compiler-explorer--request-async)
           t)
       (error
-       (compiler-explorer--cleanup)
-       (setq compiler-explorer--last-session nil)
+       (compiler-explorer--cleanup 'skip-save-session)
        (display-warning
         'compiler-explorer "Previous session appears to be corrupt" :warning)
        nil))))
@@ -1437,7 +1442,7 @@ end, with the source buffer as current."
          nil))
   (condition-case err
       (compiler-explorer-new-session-1 lang compiler)
-    (error (compiler-explorer--cleanup)
+    (error (compiler-explorer--cleanup 'skip-save-session)
            (signal (car err) (cdr err)))))
 
 (defun compiler-explorer-exit ()
