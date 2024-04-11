@@ -52,6 +52,9 @@
 ;; M-x `compiler-explorer-set-input' reads a string from minibuffer that
 ;; will be used as input for the executed program.
 ;;
+;; M-x `compiler-explorer-load-example' prompts for a name of a builtin
+;; example and loads it.
+;;
 ;; M-x `compiler-explorer-new-session' kills the current session and
 ;; creates a new one, asking for source language.
 ;;
@@ -239,6 +242,47 @@ The return value will be:
                        (puthash key t cache)))))
         :parser #'compiler-explorer--parse-json)
       'async))))
+
+(defvar compiler-explorer--examples nil)
+(defun compiler-explorer--examples (&optional lang)
+  "Get an alist of the examples.
+Keys are example names, values are example objects as returned by the API.
+If LANG is non-nil, return only examples for language with that id."
+  (let ((examples
+         (or compiler-explorer--examples
+             (setq compiler-explorer--examples
+                   (request-response-data
+                    (compiler-explorer--request-sync
+                      (format "Fetching %S examples" lang)
+                      (concat compiler-explorer-url "/source/builtin/list")
+                      :headers '(("Accept" . "application/json"))
+                      :parser #'compiler-explorer--parse-json))))))
+    (when lang
+      (setq examples (seq-filter (lambda (example)
+                                   (string= (plist-get example :lang)
+                                            lang))
+                                 examples)))
+    (setq examples (mapcar (lambda (example)
+                             (cons (plist-get example :name) example))
+                           examples))
+    examples))
+
+(defvar compiler-explorer--cached-example-data (make-hash-table :test #'equal)
+  "Keys are strings of the form LANG:EXAMPLE-FILE.
+Values are the example objects from API.")
+
+(defun compiler-explorer--example (lang file)
+  "Get a single example FILE in LANG."
+  (let ((key (format "%s:%s" lang file)))
+    (or (map-elt compiler-explorer--cached-example-data key)
+        (setf
+         (map-elt compiler-explorer--cached-example-data key)
+         (request-response-data
+          (compiler-explorer--request-sync
+            (format "Fetching %S example %s" lang file)
+            (concat compiler-explorer-url "/source/builtin/load/" lang "/" file)
+            :headers '(("Accept" . "application/json"))
+            :parser #'compiler-explorer--parse-json))))))
 
 
 ;; Compilation
@@ -950,6 +994,15 @@ It must have been created with `compiler-explorer--current-session'."
                       (interactive)
                       (compiler-explorer-new-session (plist-get lang :name)))))
           (compiler-explorer--languages)))
+      ("Load example"
+       ,@(mapcar
+          (pcase-lambda (`(,name . ,_))
+            (vector name
+                    (lambda ()
+                      (interactive)
+                      (compiler-explorer-load-example name))))
+          (compiler-explorer--examples
+           (plist-get compiler-explorer--language-data :id))))
       "--"
       ("Compiler"
        ,@(mapcar
@@ -1334,6 +1387,32 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
     (do-it layout)
     (balance-windows)))
 
+(defun compiler-explorer-load-example (example)
+  "Load an example named EXAMPLE.
+Interactively, this prompts for an example to load for the current language."
+  (interactive
+   (list
+    (and (or (compiler-explorer--active-p)
+             (user-error "Not in a `compiler-explorer' session"))
+         (completing-read
+          "Load example: "
+          (compiler-explorer--examples
+           (plist-get compiler-explorer--language-data :id))
+          nil t))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
+  (if-let* ((lang (plist-get compiler-explorer--language-data :id))
+            (all (compiler-explorer--examples lang))
+            (data (cdr (assoc example all))))
+      (with-temp-buffer
+        (insert (plist-get
+                 (compiler-explorer--example lang (plist-get data :file))
+                 :file))
+        (compiler-explorer--replace-buffer-contents
+         (get-buffer compiler-explorer--buffer)
+         (current-buffer)))
+    (error "Unknown example %S" example)))
+
 (defun compiler-explorer-make-link (&optional open)
   "Save URL to current session in the kill ring.
 With an optional prefix argument OPEN, open that link in a browser."
@@ -1403,6 +1482,7 @@ The source buffer is current when this hook runs.")
 
     ;; Prefetch
     (ignore (compiler-explorer--libraries (plist-get lang-data :id)))
+    (ignore (compiler-explorer--examples (plist-get lang-data :id)))
 
     (with-current-buffer (generate-new-buffer compiler-explorer--buffer)
       ;; Find major mode by extension

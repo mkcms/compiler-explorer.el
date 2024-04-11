@@ -22,6 +22,9 @@ program.
 `M-x compiler-explorer-set-input` reads a string from minibuffer that will be
 used as input for the executed program.
 
+`M-x compiler-explorer-load-example` prompts for a name of a builtin example
+and loads it.
+
 `M-x compiler-explorer-new-session` kills the current session and creates a new
 one, asking for source language.
 

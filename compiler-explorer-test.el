@@ -133,6 +133,25 @@
     (goto-char (point-min))
     (should (search-forward "Pushes a new function object on the stack."))))
 
+(ert-deftest compiler-explorer-api-examples ()
+  (let ((examples (compiler-explorer--examples)))
+    (should examples)
+    (should (listp examples))
+    (should (cl-every #'consp examples))
+    (mapc (pcase-lambda (`(,name . ,data))
+            (should (stringp name))
+            (should (listp data))
+            (should (stringp (plist-get data :file)))
+            (should (stringp (plist-get data :name)))
+            (should (stringp (plist-get data :lang))))
+          examples)
+    (setq examples (compiler-explorer--examples "c++"))
+    (should examples)
+    (mapc (pcase-lambda (`(,_ . ,data))
+            (setq data (compiler-explorer--example "c++" (plist-get data :file)))
+            (should (stringp (plist-get data :file))))
+          examples)))
+
 (ert-deftest compiler-explorer-auto-mode ()
   "Test that major mode is set automatically from language."
   (compiler-explorer-test--with-session "C++" nil
@@ -208,6 +227,23 @@ foo:
       (forward-char -1)
       (should (string-match-p "Transfers program control to a different point"
                               (compiler-explorer-test--help-message))))))
+
+(ert-deftest compiler-explorer-loading-example ()
+  "Check that we can load an example."
+  (compiler-explorer-test--with-session "C++" "x86-64 clang (trunk)"
+    (with-current-buffer compiler-explorer--buffer
+      (erase-buffer))
+
+    (compiler-explorer-load-example "Max array")
+
+    (compiler-explorer-test--wait)
+
+    (with-current-buffer compiler-explorer--buffer
+      (should-not (string-empty-p (buffer-string))))
+
+    (should-not
+     (string-match-p
+      "Compilation failed" (compiler-explorer-test--compilation-result)))))
 
 (ert-deftest compiler-explorer-setting-compiler-args ()
   "Check that setting arguments works and triggers recompilation."
