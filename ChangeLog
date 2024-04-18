@@ -1,3 +1,31 @@
+2024-04-18  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.4.0
+
+	- The "Debug Intrinsics" output filter can now be set.
+
+	- Useless (unmodified) sessions are now not persisted.
+
+	- The compilation and execution buffers are now updated
+	non-destructively, i.e the point and window scroll is preserved
+	when possible.
+
+	- A menu bar is now available in compiler-explorer sessions.
+
+	- New command `compiler-explorer-exit' kills the current session.
+
+	- Documentation for ASM opcodes is now optionally provided via
+	eldoc in the compilation buffers.  This is controlled by the
+	`compiler-explorer-document-opcodes' defcustom.
+
+	- New command `compiler-explorer-load-example' loads a named
+	example for the current language.
+
+	- The annoying "request--callback: peculiar error" message has
+	been removed.
+
+	- Various fixes and smaller improvements.
+
 2024-03-28  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.3.0
