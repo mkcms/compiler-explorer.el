@@ -52,6 +52,9 @@
 ;; M-x `compiler-explorer-set-input' reads a string from minibuffer that
 ;; will be used as input for the executed program.
 ;;
+;; M-x `compiler-explorer-jump' jumps to ASM block for the source line at
+;; point and vice versa.
+;;
 ;; M-x `compiler-explorer-load-example' prompts for a name of a builtin
 ;; example and loads it.
 ;;
@@ -74,8 +77,10 @@
 
 (require 'ansi-color)
 (require 'browse-url)
+(require 'color)
 (require 'compile)
 (require 'json)
+(require 'pulse)
 (require 'request)
 (require 'ring)
 (require 'seq)
@@ -430,6 +435,7 @@ This calls `compiler-explorer--handle-compilation-response' and
   (unless (eq t (plist-get compiler-explorer--compiler-data :supportsExecute))
     (setq compiler-explorer--last-exe-request nil)
     (compiler-explorer--handle-compiler-with-no-execution))
+  (compiler-explorer--build-overlays nil)
   (force-mode-line-update))
 
 (defvar compiler-explorer--project-dir)
@@ -474,17 +480,35 @@ contents are replaced destructively and point is not preserved."
           (insert-buffer-substring source))))))
 
 (defvar compiler-explorer-document-opcodes)
+(defvar compiler-explorer-source-to-asm-mappings)
 (cl-defun compiler-explorer--handle-compilation-response
     (&key data &allow-other-keys)
   "Handle compilation response contained in DATA."
   (cl-destructuring-bind (&key asm stdout stderr code &allow-other-keys) data
     (let ((compiler (get-buffer compiler-explorer--compiler-buffer))
-          (output (get-buffer-create compiler-explorer--output-buffer)))
+          (output (get-buffer-create compiler-explorer--output-buffer))
+          source-to-asm-mappings)
       (with-current-buffer compiler
         (with-temp-buffer
-          (insert (mapconcat (lambda (line) (plist-get line :text)) asm "\n"))
+          (seq-do
+           (lambda (line)
+             (cl-destructuring-bind (&key text source &allow-other-keys) line
+               (let ((line-num (plist-get source :line))
+                     (file (plist-get source :file))
+                     mapping)
+                 (when (and compiler-explorer-source-to-asm-mappings line-num
+                            (plist-member source :file) (null file)
+                            (> line-num 0))
+                   (if (setq mapping (assq line-num source-to-asm-mappings))
+                       (push (point) (cdr mapping))
+                     (push (cons line-num (list (point)))
+                           source-to-asm-mappings))))
+               (insert text "\n")))
+           asm)
           (compiler-explorer--replace-buffer-contents compiler (current-buffer)))
 
+        (when compiler-explorer-source-to-asm-mappings
+          (compiler-explorer--build-overlays source-to-asm-mappings))
         (when compiler-explorer-document-opcodes
           (add-hook
            'eldoc-documentation-functions
@@ -821,6 +845,115 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (setq compiler-explorer--project-dir nil))
 
 
+;; Source<->ASM overlays
+
+(defun compiler-explorer--overlay-bg-base (percent)
+  "Get the color for overlay background, PERCENT darker from default."
+  (unless (string= (face-background 'default) "unspecified-bg")
+    (color-darken-name (face-background 'default nil t) percent)))
+
+(defface compiler-explorer-1
+  `((t :background ,(compiler-explorer--overlay-bg-base 46)
+       :extend t))
+  "One of the faces used for coloring code&ASM regions.")
+
+(defface compiler-explorer-2
+  `((t :background ,(compiler-explorer--overlay-bg-base 28)
+       :extend t))
+  "One of the faces used for coloring code&ASM regions.")
+
+(defface compiler-explorer-3
+  `((t :background ,(compiler-explorer--overlay-bg-base 17)
+       :extend t))
+  "One of the faces used for coloring code&ASM regions.")
+
+(defface compiler-explorer-4
+  `((t :background ,(compiler-explorer--overlay-bg-base 10)
+       :extend t))
+  "One of the faces used for coloring code&ASM regions.")
+
+(defface compiler-explorer-5
+  `((t :background ,(compiler-explorer--overlay-bg-base 6)
+       :extend t))
+  "One of the faces used for coloring code&ASM regions.")
+
+(defcustom compiler-explorer-source-to-asm-mappings t
+  "If non-nil, decorate the source and ASM buffers.
+The added overlays show which portion of source code maps to ASM
+instructions.  Calling `compiler-explorer-jump' when point is
+inside one of these colored blocks jumps to and highlights the
+corresponding overlay in the other buffer."
+  :type 'boolean)
+
+(defun compiler-explorer--build-overlays (regions)
+  "Add source<->ASM mapping overlays in REGIONS.
+REGIONS should be a list of conses (LINE . POINTS), where LINE is
+the line number in source buffer, and POINTS is a list of points
+that are inside lines in the ASM buffer that map to this source
+line."
+  (with-current-buffer compiler-explorer--compiler-buffer
+    (remove-overlays nil nil 'compiler-explorer--overlay t))
+  (with-current-buffer compiler-explorer--buffer
+    (remove-overlays nil nil 'compiler-explorer--overlay t))
+
+  (setq regions (sort regions #'car-less-than-car))
+
+  (let ((faces (list 'compiler-explorer-1 'compiler-explorer-2
+                     'compiler-explorer-3 'compiler-explorer-4
+                     'compiler-explorer-5))
+        face
+        source-overlay asm-overlays
+        prev-ov)
+    (pcase-dolist (`(,line-num . ,points-in-asm) regions)
+      (setq face (car faces))
+      (setq faces (append (cdr faces) (list face)))
+      (setq asm-overlays nil source-overlay nil)
+
+      (with-current-buffer compiler-explorer--buffer
+        (save-excursion
+          (save-restriction
+            (widen)
+            (goto-char (point-min))
+            (forward-line (1- line-num))
+            (let ((ov (make-overlay (line-beginning-position)
+                                    (line-beginning-position 2))))
+              (overlay-put ov 'compiler-explorer--overlay t)
+              (overlay-put ov 'compiler-explorer--overlay-group (list ov))
+              (overlay-put ov 'face face)
+              (overlay-put ov 'priority -100)
+              (setq source-overlay ov)))))
+
+      (with-current-buffer compiler-explorer--compiler-buffer
+        (dolist (pt points-in-asm)
+          (goto-char pt)
+          (setq prev-ov (car asm-overlays))
+          (cond
+           ;; Merge adjacent overlays
+           ((and prev-ov (= (overlay-end prev-ov)
+                            (line-beginning-position)))
+            (move-overlay prev-ov (overlay-start prev-ov)
+                          (line-beginning-position 2)))
+           ((and prev-ov (= (overlay-start prev-ov)
+                            (line-beginning-position 2)))
+            (move-overlay prev-ov (line-beginning-position)
+                          (overlay-end prev-ov)))
+           (t
+            (let ((ov (make-overlay (line-beginning-position)
+                                    (line-beginning-position 2))))
+              (overlay-put ov 'compiler-explorer--overlay t)
+              (overlay-put ov 'compiler-explorer--target source-overlay)
+              (overlay-put ov 'face face)
+              (overlay-put ov 'priority -100)
+
+              (push ov asm-overlays))))))
+
+      (setq asm-overlays (seq-sort-by #'overlay-start #'< asm-overlays))
+      (dolist (ov asm-overlays)
+        (overlay-put ov 'compiler-explorer--overlay-group asm-overlays))
+      (overlay-put source-overlay 'compiler-explorer--target
+                   (car asm-overlays)))))
+
+
 ;; Stuff/hacks for integration with other packages
 
 (defcustom compiler-explorer-make-temp-file t
@@ -1073,6 +1206,13 @@ It must have been created with `compiler-explorer--current-session'."
                              (compiler-explorer--define-menu))
                           :style 'toggle
                           :selected v)))
+      ["Source to ASM mappings"
+       (lambda ()
+         (interactive)
+         (setq compiler-explorer-source-to-asm-mappings
+               (not compiler-explorer-source-to-asm-mappings))
+         (compiler-explorer--request-async))
+       :style toggle :selected compiler-explorer-source-to-asm-mappings]
       ["Next layout" compiler-explorer-layout]
       ["Copy link to this session" compiler-explorer-make-link]
       "--"
@@ -1096,6 +1236,52 @@ is a symbol, either:
 
 VALUE is the new value, a string.
 ")
+
+(defun compiler-explorer-jump (&optional which)
+  "Jump to corresponding ASM block or source code line.
+From source buffer, jump to the first ASM block for the line at
+point.  From ASM buffer, jump to the source buffer and line for
+the instruction at point.
+
+With a non-numeric prefix argument, jumps to the NEXT region that
+maps to this source line, or to the source line itself.  Thus,
+repeatedly calling this command with non-numeric prefix argument
+will go through all related ASM blocks for one source code block.
+
+With a numeric prefix argument, jumps to the Nth ASM block for
+the same source line."
+  (interactive "P")
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
+  (if-let ((ov (cl-find-if
+                (lambda (ov) (overlay-get ov 'compiler-explorer--overlay))
+                (overlays-at (point)))))
+      (let* ((chain (overlay-get ov 'compiler-explorer--overlay-group))
+             (index-of-this-ov (cl-position ov chain))
+             (requested-within-chain
+              (% (if (numberp which) (1- which) (1+ index-of-this-ov))
+                 (length chain)))
+             (target-ov (if (or (null which)
+                                (and (not (numberp which))
+                                     ;; Are we in the last ASM block for this
+                                     ;; line?
+                                     (= index-of-this-ov (1- (length chain)))))
+                            ;; Jump to the other buffer, e.g. source from ASM
+                            (overlay-get ov 'compiler-explorer--target)
+                          (nth requested-within-chain chain)))
+             (buf (overlay-buffer target-ov)))
+        (setq chain (overlay-get target-ov 'compiler-explorer--overlay-group))
+        (pop-to-buffer buf)
+        (with-current-buffer buf
+          (pulse-momentary-highlight-overlay target-ov)
+          (goto-char (overlay-start target-ov)))
+        (message "%s block %d/%d"
+                 (if (eq (current-buffer)
+                         (get-buffer compiler-explorer--buffer))
+                     "Source" "ASM")
+                 (1+ (cl-position target-ov chain))
+                 (length chain)))
+    (error "No corresponding ASM or source code block at point")))
 
 (defun compiler-explorer-set-input (input)
   "Set the input to use as stdin for execution to INPUT, a string."

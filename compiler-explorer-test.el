@@ -400,6 +400,61 @@ int main(int argc, char** argv) {
     (should (string= "boost" (caar compiler-explorer--selected-libraries)))
     (should (string= "174" (cadar compiler-explorer--selected-libraries)))))
 
+(ert-deftest compiler-explorer-mappings ()
+  (compiler-explorer-test--with-session "C++" nil
+    (with-current-buffer compiler-explorer--buffer
+      (compiler-explorer-set-compiler-args "-O2")
+      (erase-buffer)
+      (insert "
+__attribute__((noinline)) int foo() { asm (\"\"); return 987654321; }
+
+__attribute__((noinline)) int bar() { asm (\"\"); return -1; }
+
+ int quux(int c) {
+    return
+          foo()
+        + bar()
+        + c;
+}
+")
+
+      (compiler-explorer-test--wait)
+      (goto-char (point-min))
+
+      (search-forward "foo")
+      (save-current-buffer
+        (compiler-explorer-jump)
+        (should (equal (current-buffer)
+                       (get-buffer compiler-explorer--compiler-buffer)))
+        (should (string-match-p "987654321" (thing-at-point 'line)))
+        (forward-line 1)
+        (compiler-explorer-jump)
+        (should (equal (current-buffer)
+                       (get-buffer compiler-explorer--buffer)))
+        (should (string-match-p "foo() {" (thing-at-point 'line))))
+
+      (search-forward "bar")
+      (save-current-buffer
+        (compiler-explorer-jump)
+        (should (string-match-p "-1" (thing-at-point 'line)))
+        (forward-line 1)
+        (compiler-explorer-jump)
+        (should (string-match-p "bar() {" (thing-at-point 'line))))
+
+      (search-forward "quux")
+      (save-current-buffer
+        (search-forward "foo")
+        (compiler-explorer-jump)
+        (should (string-match-p "call.*foo" (thing-at-point 'line))))
+      (save-current-buffer
+        (search-forward "bar")
+        (compiler-explorer-jump)
+        (should (string-match-p "call.*bar" (thing-at-point 'line))))
+      (save-current-buffer
+        (search-forward "+ c")
+        (compiler-explorer-jump)
+        (should (string-match-p "\\badd\\b" (thing-at-point 'line)))))))
+
 (provide 'compiler-explorer-test)
 ;;; compiler-explorer-test.el ends here
 

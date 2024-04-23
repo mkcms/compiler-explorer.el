@@ -31,6 +31,7 @@ KEYMAP := --eval '(dolist (elt                                                \
           (,(kbd "<f2> l") . compiler-explorer-layout)                        \
           (,(kbd "<f2> L") . compiler-explorer-make-link)                     \
           (,(kbd "<f2> e") . compiler-explorer-show-output)                   \
+          (,(kbd "C-c e RET") . compiler-explorer-jump)                       \
           (,(kbd "<f2> q") . compiler-explorer-exit)))                        \
   (global-set-key (car elt) (cdr elt)))'
 
