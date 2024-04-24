@@ -1240,21 +1240,29 @@ the same source line."
   (if-let ((ov (cl-find-if
                 (lambda (ov) (overlay-get ov 'compiler-explorer--overlay))
                 (overlays-at (point)))))
-      (let* ((chain (overlay-get ov 'compiler-explorer--overlay-group))
-             (index-of-this-ov (cl-position ov chain))
-             (requested-within-chain
+      (let* ((group (overlay-get ov 'compiler-explorer--overlay-group))
+             (index-of-this-ov (cl-position ov group))
+             (requested-within-group
               (% (if (numberp which) (1- which) (1+ index-of-this-ov))
-                 (length chain)))
+                 (length group)))
              (target-ov (if (or (null which)
                                 (and (not (numberp which))
                                      ;; Are we in the last ASM block for this
                                      ;; line?
-                                     (= index-of-this-ov (1- (length chain)))))
+                                     (= index-of-this-ov (1- (length group)))))
                             ;; Jump to the other buffer, e.g. source from ASM
                             (overlay-get ov 'compiler-explorer--target)
-                          (nth requested-within-chain chain)))
+                          (nth requested-within-group group)))
              (buf (overlay-buffer target-ov)))
-        (setq chain (overlay-get target-ov 'compiler-explorer--overlay-group))
+        (setq group (overlay-get target-ov 'compiler-explorer--overlay-group))
+
+        (when (null which)
+          (setq target-ov
+                (car (seq-sort-by (lambda (ov)
+                                    (with-current-buffer (overlay-buffer ov)
+                                      (abs (- (overlay-start ov) (point)))))
+                                  #'< group))))
+
         (pop-to-buffer buf)
         (with-current-buffer buf
           (pulse-momentary-highlight-overlay target-ov)
@@ -1263,8 +1271,8 @@ the same source line."
                  (if (eq (current-buffer)
                          (get-buffer compiler-explorer--buffer))
                      "Source" "ASM")
-                 (1+ (cl-position target-ov chain))
-                 (length chain)))
+                 (1+ (cl-position target-ov group))
+                 (length group)))
     (error "No corresponding ASM or source code block at point")))
 
 (defun compiler-explorer-set-input (input)
