@@ -6,7 +6,7 @@
 ;; Keywords: c, tools
 ;; Version: 0.4.0
 ;; Homepage: https://github.com/mkcms/compiler-explorer.el
-;; Package-Requires: ((emacs "26.1") (request "0.3.0") (eldoc "1.15.0"))
+;; Package-Requires: ((emacs "26.1") (request "0.3.0") (eldoc "1.15.0") (map "3.3.1") (seq "2.24"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -80,20 +80,24 @@
 (require 'color)
 (require 'compile)
 (require 'json)
+(require 'map)
 (require 'pulse)
 (require 'request)
 (require 'ring)
-(require 'seq)
 (require 'subr-x)
 
-;; `require'-ing eldoc does not guarantee it is loaded as it is preloaded in
-;; Emacs.
+;; `require'-ing these does not guarantee they are loaded as they are preloaded
+;; in Emacs.
 ;;
 ;; This hack was stolen from the built-in eglot.el.
-(if (and (< emacs-major-version 28)
-         (not (boundp 'eldoc-documentation-strategy)))
-    (load "eldoc" nil 'nomessage)
-  (require 'eldoc))
+(if (< emacs-major-version 28)
+    (progn
+      (load "eldoc" nil 'nomessage)
+      (load "seq" nil 'nomessage)
+      (load "map" nil 'nomessage))
+  (require 'eldoc)
+  (require 'seq)
+  (require 'map))
 
 (defgroup compiler-explorer nil "Client for compiler-explorer service."
   :group 'tools)
@@ -258,19 +262,17 @@ If LANG is non-nil, return only examples for language with that id."
              (setq compiler-explorer--examples
                    (request-response-data
                     (compiler-explorer--request-sync
-                      (format "Fetching %S examples" lang)
-                      (concat compiler-explorer-url "/source/builtin/list")
-                      :headers '(("Accept" . "application/json"))
-                      :parser #'compiler-explorer--parse-json))))))
-    (when lang
-      (setq examples (seq-filter (lambda (example)
-                                   (string= (plist-get example :lang)
-                                            lang))
-                                 examples)))
-    (setq examples (mapcar (lambda (example)
-                             (cons (plist-get example :name) example))
-                           examples))
-    examples))
+                     (format "Fetching %S examples" (or lang "all"))
+                     (concat compiler-explorer-url "/source/builtin/list")
+                     :headers '(("Accept" . "application/json"))
+                     :parser #'compiler-explorer--parse-json))))))
+    (remq 'none
+          (mapcar
+           (lambda (example)
+             (or
+              (and lang (not (string= lang (plist-get example :lang))) 'none)
+              (cons (plist-get example :name) example)))
+           examples))))
 
 (defvar compiler-explorer--cached-example-data (make-hash-table :test #'equal)
   "Keys are strings of the form LANG:EXAMPLE-FILE.
@@ -430,7 +432,7 @@ This calls `compiler-explorer--handle-compilation-response' and
                       :allowStoreCodeDebug :json-false)))
            :parser #'compiler-explorer--parse-json-compilation
            :complete (lambda (&rest _args) (force-mode-line-update t))
-           :error #'ignore              ;Error is displayed in the mode-line
+           :error #'ignore              ;Error is displayed in the header-line
            :success handler)))
   (unless (eq t (plist-get compiler-explorer--compiler-data :supportsExecute))
     (setq compiler-explorer--last-exe-request nil)
@@ -484,116 +486,105 @@ contents are replaced destructively and point is not preserved."
 (cl-defun compiler-explorer--handle-compilation-response
     (&key data &allow-other-keys)
   "Handle compilation response contained in DATA."
-  (cl-destructuring-bind (&key asm stdout stderr code &allow-other-keys) data
-    (let ((compiler (get-buffer compiler-explorer--compiler-buffer))
-          (output (get-buffer-create compiler-explorer--output-buffer))
-          source-to-asm-mappings)
-      (with-current-buffer compiler
-        (with-temp-buffer
-          (seq-do
-           (lambda (line)
-             (cl-destructuring-bind (&key text source &allow-other-keys) line
-               (let ((line-num (plist-get source :line))
-                     (file (plist-get source :file))
-                     mapping)
-                 (when (and compiler-explorer-source-to-asm-mappings line-num
-                            (plist-member source :file) (null file)
-                            (> line-num 0))
-                   (if (setq mapping (assq line-num source-to-asm-mappings))
-                       (push (point) (cdr mapping))
-                     (push (cons line-num (list (point)))
-                           source-to-asm-mappings))))
-               (insert text "\n")))
-           asm)
-          (compiler-explorer--replace-buffer-contents compiler (current-buffer)))
+  (pcase-let (((map :asm :stdout :stderr :code) data)
+              (compiler (get-buffer compiler-explorer--compiler-buffer))
+              (output (get-buffer-create compiler-explorer--output-buffer))
+              (source-to-asm-mappings nil))
+    (with-current-buffer compiler
+      (with-temp-buffer
+        (seq-do
+         (pcase-lambda ((map :text (:source (and source (map :line :file)))))
+           (let (mapping)
+             (when (and compiler-explorer-source-to-asm-mappings line
+                        (plist-member source :file) (null file) (> line 0))
+               (if (setq mapping (assq line source-to-asm-mappings))
+                   (push (point) (cdr mapping))
+                 (push (cons line (list (point))) source-to-asm-mappings))))
+           (insert text "\n"))
+         asm)
+        (compiler-explorer--replace-buffer-contents compiler (current-buffer)))
 
-        (when compiler-explorer-source-to-asm-mappings
-          (compiler-explorer--build-overlays source-to-asm-mappings))
-        (when compiler-explorer-document-opcodes
-          (add-hook
-           'eldoc-documentation-functions
-           'compiler-explorer--compilation-eldoc-documentation-function nil t)
-          (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
-          (eldoc-mode +1))
+      (when compiler-explorer-source-to-asm-mappings
+        (compiler-explorer--build-overlays source-to-asm-mappings))
+      (when compiler-explorer-document-opcodes
+        (add-hook
+         'eldoc-documentation-functions
+         'compiler-explorer--compilation-eldoc-documentation-function nil t)
+        (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
+        (eldoc-mode +1))
 
-        ;; Make the ASM view more like godbolt.org.
-        ;; TODO: this should be only set once - when this buffer is created.
-        (setq truncate-lines t))
+      ;; Make the ASM view more like godbolt.org.
+      ;; TODO: this should be only set once - when this buffer is created.
+      (setq truncate-lines t))
 
-      ;; Update output buffer
-      (with-current-buffer output
-        (with-temp-buffer
-          (insert (mapconcat (lambda (line) (plist-get line :text))
-                             stdout "\n")
-                  "\n")
-          (insert (mapconcat (lambda (line) (plist-get line :text))
-                             stderr "\n")
-                  "\n")
-          (insert (format "Compiler exited with code %s" code))
-          (compiler-explorer--replace-buffer-contents output (current-buffer)))
+    ;; Update output buffer
+    (with-current-buffer output
+      (with-temp-buffer
+        (insert (mapconcat (lambda (line) (plist-get line :text))
+                           stdout "\n")
+                "\n")
+        (insert (mapconcat (lambda (line) (plist-get line :text))
+                           stderr "\n")
+                "\n")
+        (insert (format "Compiler exited with code %s" code))
+        (compiler-explorer--replace-buffer-contents output (current-buffer)))
+      (let ((buffer-read-only nil))
+        (ansi-color-apply-on-region (point-min) (point-max)))
+
+      (setq buffer-read-only t)
+      (unless (eq major-mode 'compilation-mode)
+        (compilation-mode)
+        (setq buffer-undo-list t))
+      (compiler-explorer-mode +1)
+      (when compiler-explorer--project-dir
+        (setq-local default-directory compiler-explorer--project-dir)
+        (setq-local compilation-parse-errors-filename-function
+                    #'compiler-explorer--compilation-parse-errors-filename))
+      (with-demoted-errors "compilation-parse-errors: %s"
         (let ((buffer-read-only nil))
-          (ansi-color-apply-on-region (point-min) (point-max)))
-
-        (setq buffer-read-only t)
-        (unless (eq major-mode 'compilation-mode)
-          (compilation-mode)
-          (setq buffer-undo-list t))
-        (compiler-explorer-mode +1)
-        (when compiler-explorer--project-dir
-          (setq-local default-directory compiler-explorer--project-dir)
-          (setq-local compilation-parse-errors-filename-function
-                      #'compiler-explorer--compilation-parse-errors-filename))
-        (with-demoted-errors "compilation-parse-errors: %s"
-          (let ((buffer-read-only nil))
-            (compilation-parse-errors (point-min) (point-max)))))))
+          (compilation-parse-errors (point-min) (point-max))))))
   (force-mode-line-update t))
 
 (defun compiler-explorer--handle-compiler-with-no-execution ()
   "Update the execution output buffer with info about unsupported compiler.
 This will write the list of supported compilers in the execution
 output buffer."
-  (let ((compiler compiler-explorer--compiler-data)
-        (lang-id (plist-get compiler-explorer--language-data :id)))
-    (with-current-buffer
-        (get-buffer-create compiler-explorer--exe-output-buffer)
-      (compiler-explorer-mode +1)
-      (setq buffer-read-only t)
-      (setq buffer-undo-list t)
-      (setq header-line-format
-            `(:eval (compiler-explorer--header-line-format-executor)))
-      (let ((buffer-read-only nil))
-        (erase-buffer)
-        (save-excursion
-          (insert (format "Error: The %s compiler does not support execution."
-                          (propertize (plist-get compiler :name)
-                                      'face 'underline)))
-          (insert "\n\n")
-          (insert "The current language supports execution with these "
-                  "compilers (click to set):\n")
+  (with-current-buffer (get-buffer-create compiler-explorer--exe-output-buffer)
+    (compiler-explorer-mode +1)
+    (setq buffer-read-only t)
+    (setq buffer-undo-list t)
+    (setq header-line-format
+          `(:eval (compiler-explorer--header-line-format-executor)))
+    (let ((buffer-read-only nil)
+          (keymap (make-keymap))
+          (compiler (plist-get compiler-explorer--compiler-data :name))
+          (lang-id (plist-get compiler-explorer--language-data :id)))
+      (define-key keymap [mouse-1] 'compiler-explorer-set-compiler)
+      (erase-buffer)
+      (save-excursion
+        (insert (format "Error: The %s compiler does not support execution."
+                        (propertize compiler 'face 'underline)))
+        (insert "\n\n")
+        (insert "The current language supports execution with these "
+                "compilers (click to set):\n")
 
-          (cl-loop for comp across (compiler-explorer--compilers)
-                   for lang = (plist-get comp :lang)
-                   for id = (plist-get comp :id)
-                   for executable = (eq t (plist-get comp :supportsExecute))
-                   with keymap = (let ((map (make-keymap)))
-                                   (define-key map [mouse-1]
-                                               'compiler-explorer-set-compiler)
-                                   map)
-                   if (and (string= lang lang-id) executable)
-                   do (insert " "
-                              (propertize
-                               (plist-get comp :name)
-                               'compiler-explorer-compiler-id id
-                               'face 'link
-                               'mouse-face 'highlight
-                               'keymap  keymap
-                               'help-echo "Click to set")
-                              "\n")))))))
+        (seq-do
+         (pcase-lambda ((map :lang :id :supportsExecute :name))
+           (when (and (eq t supportsExecute) (string= lang lang-id))
+             (insert " "
+                     (propertize name
+                                 'compiler-explorer-compiler-id id
+                                 'face 'link
+                                 'mouse-face 'highlight
+                                 'keymap keymap
+                                 'help-echo "Click to set")
+                     "\n")))
+         (compiler-explorer--compilers))))))
 
 (cl-defun compiler-explorer--handle-execution-response
     (&key data &allow-other-keys)
   "Handle execution response contained in DATA."
-  (cl-destructuring-bind (&key stdout stderr code &allow-other-keys) data
+  (pcase-let (((map :stdout :stderr :code) data))
     (with-current-buffer (get-buffer-create compiler-explorer--exe-output-buffer)
       (compiler-explorer-mode +1)
       (setq buffer-read-only t)
@@ -640,8 +631,7 @@ output buffer."
                                        (request-response-status-code resp)
                                        (request-response-error-thrown resp))))
               (t
-               (cl-destructuring-bind (&key stdout stderr &allow-other-keys)
-                   (request-response-data resp)
+               (pcase-let (((map :stdout :stderr) (request-response-data resp)))
                  (propertize
                   (format "%s (%s/%s)"
                           (propertize "Done" 'face 'success)
@@ -733,11 +723,9 @@ output buffer."
       'help-echo (concat
                   "Libraries:\n"
                   (mapconcat
-                   (pcase-lambda (`(,_ ,vid ,entry))
-                     (format "%s %s"
-                             (plist-get entry :name)
-                             (cl-loop with elems = (plist-get entry :versions)
-                                      for version across elems
+                   (pcase-lambda (`(,_ ,vid ,(map :name :versions)))
+                     (format "%s %s" name
+                             (cl-loop for version across versions
                                       for id = (plist-get version :id)
                                       when (string= id vid)
                                       return (plist-get version :version))))
@@ -1054,8 +1042,9 @@ the minibuffer and separate help buffers."
 (defun compiler-explorer--restore-session (session)
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
-  (cl-destructuring-bind
-      (&key version lang-name compiler libs args exe-args input source) session
+  (pcase-let
+      (((map :version :lang-name :compiler :libs :args :exe-args :input :source)
+        session))
     (or version (setq version 0))
     (when (> version 1)
       (error "Don't know how to restore session version %s" version))
@@ -1122,62 +1111,56 @@ It must have been created with `compiler-explorer--current-session'."
       ["Previous session" compiler-explorer-previous-session]
       ("New session"
        ,@(mapcar
-          (lambda (lang)
-            (vector (plist-get lang :name)
-                    (lambda ()
-                      (interactive)
-                      (compiler-explorer-new-session (plist-get lang :name)))))
+          (pcase-lambda ((map :name))
+            (vector name (lambda ()
+                           (interactive)
+                           (compiler-explorer-new-session name))))
           (compiler-explorer--languages)))
       ("Load example"
        ,@(mapcar
-          (pcase-lambda (`(,name . ,_))
-            (vector name
-                    (lambda ()
-                      (interactive)
-                      (compiler-explorer-load-example name))))
-          (compiler-explorer--examples
-           (plist-get compiler-explorer--language-data :id))))
+          (lambda (name)
+            (vector name (lambda ()
+                           (interactive)
+                           (compiler-explorer-load-example name))))
+          (mapcar #'car
+                  (compiler-explorer--examples
+                   (plist-get compiler-explorer--language-data :id)))))
       "--"
       ("Compiler"
        ,@(mapcar
-          (lambda (comp)
-            (vector comp
+          (pcase-lambda ((map :name))
+            (vector name
                     (lambda ()
                       (interactive)
-                      (compiler-explorer-set-compiler comp))))
-          (cl-loop for compiler across (compiler-explorer--compilers)
-                   for lang = (plist-get compiler :lang)
-                   for name = (plist-get compiler :name)
-                   with curr = (plist-get compiler-explorer--language-data :id)
-                   if (string= lang curr) collect name)))
+                      (compiler-explorer-set-compiler name))))
+          (cl-remove-if
+           (pcase-lambda ((map :lang))
+             (not (string= lang (plist-get compiler-explorer--language-data :id))))
+           (compiler-explorer--compilers))))
       ["Set compilation arguments" compiler-explorer-set-compiler-args]
       ("Add library"
        ,@(mapcar
-          (lambda (lib)
+          (pcase-lambda ((map :name :id :versions))
             (cl-list*
-             (plist-get lib :name)
-             :enable `(null (assoc ,(plist-get lib :id)
-                                   compiler-explorer--selected-libraries))
+             name
+             :enable `(null (assoc ,id compiler-explorer--selected-libraries))
              (mapcar
-              (lambda (version)
+              (pcase-lambda ((map :version (:id version-id)))
                 (vector
-                 (format "%s %s"
-                         (plist-get lib :name) (plist-get version :version))
+                 (format "%s %s" name version)
                  (lambda ()
                    (interactive)
-                   (compiler-explorer-add-library
-                    (plist-get lib :id) (plist-get version :id)))))
-              (plist-get lib :versions))))
+                   (compiler-explorer-add-library id version-id))))
+              versions)))
           (compiler-explorer--libraries
            (plist-get compiler-explorer--language-data :id))))
       ("Remove library"
        :enable (not (null compiler-explorer--selected-libraries))
        ,@(mapcar
-          (pcase-lambda (`(,library-id ,version-id ,entry))
+          (pcase-lambda (`(,library-id ,version-id ,(map :name :versions)))
             (vector (format "%s %s"
-                            (plist-get entry :name)
-                            (cl-loop with elems = (plist-get entry :versions)
-                                     for version across elems
+                            name
+                            (cl-loop for version across versions
                                      for id = (plist-get version :id)
                                      when (string= id version-id)
                                      return (plist-get version :version)))
@@ -1342,11 +1325,10 @@ execution."
       (get-text-property (point) 'compiler-explorer-compiler-id)
       (let* ((lang compiler-explorer--language-data)
              (default (plist-get lang :defaultCompiler))
-             (compilers (mapcar (lambda (c) `(,(plist-get c :name)
-                                              ,(plist-get c :id)
-                                              ,(plist-get c :supportsExecute)
-                                              ,(plist-get c :lang)))
-                                (compiler-explorer--compilers))))
+             (compilers (mapcar
+                         (pcase-lambda ((map :name :id :supportsExecute :lang))
+                           (list name id supportsExecute lang))
+                         (compiler-explorer--compilers))))
         (completing-read (concat "Compiler"
                                  (when current-prefix-arg " (with execution)")
                                  ": ")
@@ -1362,18 +1344,16 @@ execution."
                                        :test #'string= :key #'cadr))))))))
   (unless (compiler-explorer--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (let* ((lang-data compiler-explorer--language-data)
-         (lang (plist-get lang-data :id))
-         (name-or-id (or name-or-id (plist-get lang-data :defaultCompiler)))
-         (compiler-data (seq-find
-                         (lambda (c)
-                           (and
-                            (member name-or-id (list (plist-get c :id)
-                                                     (plist-get c :name)))
-                            (string= (plist-get c :lang) lang)))
-                         (compiler-explorer--compilers))))
+  (pcase-let*
+      (((map (:id lang-id) :defaultCompiler) compiler-explorer--language-data)
+       (name-or-id (or name-or-id defaultCompiler))
+       (compiler-data (seq-find
+                       (pcase-lambda ((map :id :name :lang))
+                         (and (member name-or-id (list id name))
+                              (string= lang lang-id)))
+                       (compiler-explorer--compilers))))
     (unless compiler-data
-      (error "No compiler %S for lang %S" name-or-id lang))
+      (error "No compiler %S for lang %S" name-or-id lang-id))
     (setq compiler-explorer--compiler-data compiler-data)
     (with-current-buffer (get-buffer-create compiler-explorer--compiler-buffer)
       (asm-mode)
@@ -1400,16 +1380,11 @@ execution."
                     (user-error "Not in a `compiler-explorer' session")))
           (candidates (cl-reduce #'nconc
                                  (mapcar
-                                  (lambda (l)
-                                    (let ((libname (plist-get l :name))
-                                          (lib-id (plist-get l :id)))
-                                      (seq-map
-                                       (lambda (v)
-                                         (let ((version (plist-get v :version))
-                                               (vid (plist-get v :id)))
-                                           `(,(concat libname " " version)
-                                             ,lib-id ,vid)))
-                                       (plist-get l :versions))))
+                                  (pcase-lambda ((map :name :id :versions))
+                                    (seq-map
+                                     (pcase-lambda ((map :version (:id vid)))
+                                       `(,(concat name " " version) ,id ,vid))
+                                     versions))
                                   (compiler-explorer--libraries lang))))
           (res (completing-read
                 "Add library: " candidates
@@ -1421,14 +1396,14 @@ execution."
   (unless (compiler-explorer--active-p)
     (error "Not in a `compiler-explorer' session"))
   (let* ((libentry
-          (cl-loop with lang = (plist-get compiler-explorer--language-data :id)
-                   for lib across (compiler-explorer--libraries lang)
-                   when (string= (plist-get lib :id) id)
-                   return lib))
+          (cl-find id (compiler-explorer--libraries
+                       (plist-get compiler-explorer--language-data :id))
+                   :key (lambda (l) (plist-get l :id))
+                   :test #'string=))
          (version-entry
-          (cl-loop for version across (plist-get libentry :versions)
-                   if (string= (plist-get version :id) version-id)
-                   return version)))
+          (cl-find version-id (plist-get libentry :versions)
+                   :key (lambda (v) (plist-get v :id))
+                   :test #'string=)))
     (unless libentry
       (error "Library with id %S is invalid for the current language" id))
     (unless version-entry
@@ -1660,16 +1635,16 @@ The source buffer is current when this hook runs.")
     (ring-insert compiler-explorer--session-ring session)
     (setq compiler-explorer--last-session nil))
 
-  (let* ((lang-data (or (seq-find
-                         (lambda (l) (string= (plist-get l :name) lang))
-                         (compiler-explorer--languages))
-                        (error "Language %S does not exist" lang)))
-         (extensions (plist-get lang-data :extensions)))
+  (pcase-let* ((lang-data (or (cl-find lang (compiler-explorer--languages)
+                                       :key (lambda (l) (plist-get l :name))
+                                       :test #'string=)
+                              (error "Language %S does not exist" lang)))
+               ((map :extensions :id :example) lang-data))
     (setq compiler-explorer--language-data lang-data)
 
     ;; Prefetch
-    (ignore (compiler-explorer--libraries (plist-get lang-data :id)))
-    (ignore (compiler-explorer--examples (plist-get lang-data :id)))
+    (ignore (compiler-explorer--libraries id))
+    (ignore (compiler-explorer--examples id))
 
     (with-current-buffer (generate-new-buffer compiler-explorer--buffer)
       ;; Find major mode by extension
@@ -1678,7 +1653,7 @@ The source buffer is current when this hook runs.")
                while (eq major-mode 'fundamental-mode)
                do (let ((buffer-file-name filename)) (set-auto-mode)))
 
-      (insert (plist-get lang-data :example))
+      (insert example)
       (add-hook 'after-change-functions #'compiler-explorer--after-change nil t)
       (compiler-explorer-mode +1)
       (save-current-buffer (compiler-explorer-set-compiler compiler))

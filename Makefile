@@ -12,6 +12,8 @@ INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
 	  (push (cons "melpa" "https://melpa.org/packages/") package-archives)\
 	  (package-refresh-contents)                                          \
 	  (package-install `request)                                          \
+	  (package-install (cadr (assoc `map package-archive-contents)))      \
+	  (package-install (cadr (assoc `seq package-archive-contents)))      \
 	  (package-install (cadr (assoc `eldoc package-archive-contents)))))'
 
 # Sexp to fill paragraphs in the commentary section.
