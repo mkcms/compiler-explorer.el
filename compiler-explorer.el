@@ -1141,6 +1141,10 @@ It must have been created with `compiler-explorer--current-session'."
            (compiler-explorer--compilers))))
       ["Set compilation arguments" compiler-explorer-set-compiler-args]
       ("Add library"
+       :enable (not
+                (seq-empty-p
+                 (compiler-explorer--libraries
+                  (plist-get compiler-explorer--language-data :id))))
        ,@(mapcar
           (pcase-lambda ((map :name :id :versions))
             (cl-list*
