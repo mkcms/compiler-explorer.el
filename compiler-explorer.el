@@ -849,8 +849,9 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
 
 (defun compiler-explorer--overlay-bg-base (percent)
   "Get the color for overlay background, PERCENT darker from default."
-  (unless (string= (face-background 'default) "unspecified-bg")
-    (color-darken-name (face-background 'default nil t) percent)))
+  (when-let ((bg (face-background 'default nil t)))
+    (unless (string= bg "unspecified-bg")
+      (color-darken-name bg percent))))
 
 (defface compiler-explorer-1
   `((t :background ,(compiler-explorer--overlay-bg-base 46)
