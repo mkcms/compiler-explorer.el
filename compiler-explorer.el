@@ -1115,7 +1115,9 @@ It must have been created with `compiler-explorer--current-session'."
             (vector name (lambda ()
                            (interactive)
                            (compiler-explorer-new-session name))))
-          (compiler-explorer--languages)))
+          (seq-sort-by (lambda (lang) (plist-get lang :name))
+                       #'string<
+                       (compiler-explorer--languages))))
       ("Load example"
        ,@(mapcar
           (lambda (name)
