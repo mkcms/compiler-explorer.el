@@ -80,7 +80,6 @@
 (require 'color)
 (require 'compile)
 (require 'json)
-(require 'map)
 (require 'pulse)
 (require 'request)
 (require 'ring)
@@ -90,14 +89,15 @@
 ;; in Emacs.
 ;;
 ;; This hack was stolen from the built-in eglot.el.
-(if (< emacs-major-version 28)
-    (progn
-      (load "eldoc" nil 'nomessage)
-      (load "seq" nil 'nomessage)
-      (load "map" nil 'nomessage))
-  (require 'eldoc)
-  (require 'seq)
-  (require 'map))
+(eval-and-compile
+  (if (< emacs-major-version 28)
+      (progn
+        (load "eldoc" nil 'nomessage)
+        (load "seq" nil 'nomessage)
+        (load "map" nil 'nomessage))
+    (require 'eldoc)
+    (require 'seq)
+    (require 'map)))
 
 (defgroup compiler-explorer nil "Client for compiler-explorer service."
   :group 'tools)
