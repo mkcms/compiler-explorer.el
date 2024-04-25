@@ -191,7 +191,7 @@ For all other responses, the behavior is unaltered."
                "Fetching list of compilers"
                (compiler-explorer--url "compilers")
                :params `(("fields" .
-                          ,(concat "id,name,lang,supportsExecute,"
+                          ,(concat "id,name,lang,supportsExecute,groupName,"
                                    "instructionSet,supportsBinary,"
                                    "supportsBinaryObject,"
                                    "supportsLibraryCodeFilter,"
@@ -1153,16 +1153,33 @@ It must have been created with `compiler-explorer--current-session'."
                    (plist-get compiler-explorer--language-data :id)))))
       "--"
       ("Compiler"
-       ,@(mapcar
-          (pcase-lambda ((map :name))
-            (vector name
-                    (lambda ()
-                      (interactive)
-                      (compiler-explorer-set-compiler name))))
-          (cl-remove-if
-           (pcase-lambda ((map :lang))
-             (not (string= lang (plist-get compiler-explorer--language-data :id))))
-           (compiler-explorer--compilers))))
+       ,@(let ((compilers
+                (cl-remove-if
+                 (pcase-lambda ((map :lang))
+                   (not (string= lang
+                                 (plist-get compiler-explorer--language-data :id))))
+                 (compiler-explorer--compilers)))
+               (by-group (make-hash-table :test #'equal)))
+           (cl-loop for compiler across compilers
+                    for name = (plist-get compiler :name)
+                    for group-name = (plist-get compiler :groupName)
+                    for group = (map-elt by-group group-name)
+                    if group do (nconc group (list name))
+                    else do (setf (map-elt by-group group-name) (list name)))
+
+           (seq-sort-by
+            #'car #'string<
+            (map-apply
+             (lambda (group compilers-in-group)
+               (cl-list*
+                (if (string-empty-p group) "Other compilers" group)
+                (mapcar (lambda (name)
+                          (vector name
+                                  (lambda ()
+                                    (interactive)
+                                    (compiler-explorer-set-compiler name))))
+                        compilers-in-group)))
+             by-group))))
       ["Set compilation arguments" compiler-explorer-set-compiler-args]
       ("Add library"
        :enable (not
