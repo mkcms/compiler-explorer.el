@@ -192,7 +192,11 @@ For all other responses, the behavior is unaltered."
                (compiler-explorer--url "compilers")
                :params `(("fields" .
                           ,(concat "id,name,lang,supportsExecute,"
-                                   "instructionSet")))
+                                   "instructionSet,supportsBinary,"
+                                   "supportsBinaryObject,"
+                                   "supportsLibraryCodeFilter,"
+                                   "supportsDemangle,supportsIntel,"
+                                   "disabledFilters")))
                :headers '(("Accept" . "application/json"))
                :parser #'compiler-explorer--parse-json)))))
 
@@ -356,6 +360,7 @@ with `json-parse', and a message is displayed.")
             (:text "`compiler-explorer-response-limit-bytes'")]))))
 
 (defcustom compiler-explorer-output-filters '(:binary nil
+                                                      :binaryObject nil
                                                       :commentOnly t
                                                       :demangle t
                                                       :directives t
@@ -367,6 +372,7 @@ with `json-parse', and a message is displayed.")
   "Compiler output filters."
   :type '(plist :key-type (choice
                            (const :tag "Compile to binary" :binary)
+                           (const :tag "Compile to binary object" :binaryObject)
                            (const :tag "Comments" :commentOnly)
                            (const :tag "Demangle C++ symbols" :demangle)
                            (const :tag "Directives" :directives)
@@ -377,9 +383,27 @@ with `json-parse', and a message is displayed.")
                            (const :tag "Debug intrinsics" :debugCalls))
                 :value-type boolean))
 
+(defun compiler-explorer--filter-enabled-p (filter)
+  (pcase-let (((map :supportsBinary :supportsBinaryObject
+                    :supportsLibraryCodeFilter :supportsDemangle
+                    :supportsIntel
+                    :disabledFilters)
+               compiler-explorer--compiler-data))
+    (and (cl-case filter
+           (:binary (eq t supportsBinary))
+           (:binaryObject (eq t supportsBinaryObject))
+           (:libraryCode (eq t supportsLibraryCodeFilter))
+           (:demangle (eq t supportsDemangle))
+           (:intel (eq t supportsIntel))
+           (t t))
+         (not (seq-contains-p disabledFilters
+                              (substring (symbol-name filter) 1))))))
+
 (defun compiler-explorer--output-filters ()
   "Get output filters options in a form suitable for making a request."
-  (mapcar (lambda (v) (or v :json-false)) compiler-explorer-output-filters))
+  (cl-loop for (k v) on compiler-explorer-output-filters by #'cddr
+           if (compiler-explorer--filter-enabled-p k)
+           nconc (list k (or v :json-false))))
 
 (defun compiler-explorer--request-async ()
   "Queue compilation and execution and return immediately.
@@ -1181,6 +1205,7 @@ It must have been created with `compiler-explorer--current-session'."
       ("Output filters"
        ,@(cl-loop
           for (key v) on compiler-explorer-output-filters by #'cddr
+          for is-enabled = (compiler-explorer--filter-enabled-p key)
           with name-alist =
           (cl-loop for elt in
                    (cdaddr
@@ -1195,7 +1220,8 @@ It must have been created with `compiler-explorer--current-session'."
                              (compiler-explorer--request-async)
                              (compiler-explorer--define-menu))
                           :style 'toggle
-                          :selected v)))
+                          :selected v
+                          :enable is-enabled)))
       ["Source to ASM mappings"
        (lambda ()
          (interactive)
@@ -1382,6 +1408,8 @@ execution."
       (compiler-explorer--request-async)
 
       (pop-to-buffer (current-buffer))
+
+      (compiler-explorer--define-menu)
 
       (run-hook-with-args 'compiler-explorer-params-change-hook
                           'compiler (plist-get compiler-data :name)))))
