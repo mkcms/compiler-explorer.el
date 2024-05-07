@@ -1408,7 +1408,8 @@ the same source line."
          (compiler-explorer--popular-arguments compiler)))
     (unless bounds
       (setq bounds (cons (point) (point))))
-    (list (car bounds) (cdr bounds) (hash-table-keys popular-arguments))))
+    (list (car bounds) (cdr bounds) (hash-table-keys popular-arguments)
+          :annotation-function (apply-partially #'compiler-explorer--annotate compiler))))
 
 (defun compiler-explorer-set-compiler-args (args)
   "Set compilation arguments to the string ARGS and recompile."
@@ -1420,7 +1421,7 @@ the same source line."
                                (list (apply-partially #'compiler-explorer--completing-read-helper (plist-get compiler-explorer--compiler-data :id)))))
                (read-from-minibuffer
                 "Compiler arguments: "
-                nil
+                compiler-explorer--compiler-arguments
                 (let ((map (make-sparse-keymap)))
                   (set-keymap-parent map minibuffer-local-map)
                   (define-key map "\t"       #'completion-at-point)
@@ -1428,8 +1429,7 @@ the same source line."
                   (define-key map [M-down]   #'minibuffer-next-completion)
                   (define-key map [?\M-\r]   #'minibuffer-choose-completion)
                   map)
-                nil 'compiler-explorer-set-compiler-args-history
-                compiler-explorer--compiler-arguments))
+                nil 'compiler-explorer-set-compiler-args-history))
            (user-error "Not in a `compiler-explorer' session"))))
   (unless (compiler-explorer--active-p)
     (error "Not in a `compiler-explorer' session"))
