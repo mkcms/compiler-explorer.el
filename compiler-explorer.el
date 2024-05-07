@@ -1384,53 +1384,51 @@ the same source line."
 (defvar compiler-explorer--popular-arguments-cache
   (make-hash-table :test #'equal))
 
-(defun compiler-explorer--popular-arguments (compiler)
-  (or
-   (map-elt compiler-explorer--popular-arguments-cache compiler)
-   (setf (map-elt compiler-explorer--popular-arguments-cache compiler)
-         (compiler-explorer--request-sync
-          nil
-          (compiler-explorer--url "popularArguments" compiler)
-          :headers '(("Accept" . "application/json"))
-          :as (lambda ()
-                (let ((json-key-type 'string)) (json-parse-buffer)))))))
-
-(defun compiler-explorer--annotate (compiler completion)
-  (when-let* ((popular-arguments
-               (compiler-explorer--popular-arguments compiler))
-              (elt (map-elt popular-arguments completion))
-              (desc (map-elt elt "description")))
-    (concat " " desc)))
-
-(defun compiler-explorer--completing-read-helper (compiler)
+(defun compiler-explorer--capf-popular-arguments (compiler)
   (let ((bounds (bounds-of-thing-at-point 'symbol))
-        (popular-arguments
-         (compiler-explorer--popular-arguments compiler)))
+        (arguments
+         (or
+          (map-elt compiler-explorer--popular-arguments-cache compiler)
+          (setf (map-elt compiler-explorer--popular-arguments-cache compiler)
+                (compiler-explorer--request-sync
+                 nil
+                 (compiler-explorer--url "popularArguments" compiler)
+                 :headers '(("Accept" . "application/json"))
+                 :as (lambda ()
+                       (let ((json-key-type 'string))
+                         (json-parse-buffer))))))))
     (unless bounds
       (setq bounds (cons (point) (point))))
-    (list (car bounds) (cdr bounds) (hash-table-keys popular-arguments)
-          :annotation-function (apply-partially #'compiler-explorer--annotate compiler))))
+    (list
+     (car bounds) (cdr bounds) (hash-table-keys arguments)
+     :annotation-function (lambda (completion)
+                            (when-let* ((elt (map-elt arguments completion))
+                                        (desc (map-elt elt "description")))
+                              (concat " " desc))))))
 
 (defun compiler-explorer-set-compiler-args (args)
   "Set compilation arguments to the string ARGS and recompile."
   (interactive
-   (list (if (compiler-explorer--active-p)
-             (minibuffer-with-setup-hook
-                 (lambda ()
-                   (setq-local completion-at-point-functions
-                               (list (apply-partially #'compiler-explorer--completing-read-helper (plist-get compiler-explorer--compiler-data :id)))))
-               (read-from-minibuffer
+   (if (compiler-explorer--active-p)
+       (minibuffer-with-setup-hook
+           (lambda ()
+             (setq-local
+              completion-at-point-functions
+              (list (lambda ()
+                      (compiler-explorer--capf-popular-arguments
+                       (plist-get compiler-explorer--compiler-data :id))))))
+         (list (read-from-minibuffer
                 "Compiler arguments: "
                 compiler-explorer--compiler-arguments
                 (let ((map (make-sparse-keymap)))
                   (set-keymap-parent map minibuffer-local-map)
-                  (define-key map "\t"       #'completion-at-point)
-                  (define-key map [M-up]     #'minibuffer-previous-completion)
-                  (define-key map [M-down]   #'minibuffer-next-completion)
-                  (define-key map [?\M-\r]   #'minibuffer-choose-completion)
+                  (define-key map "\t" #'completion-at-point)
+                  (define-key map [M-up] #'minibuffer-previous-completion)
+                  (define-key map [M-down] #'minibuffer-next-completion)
+                  (define-key map [?\M-\r] #'minibuffer-choose-completion)
                   map)
-                nil 'compiler-explorer-set-compiler-args-history))
-           (user-error "Not in a `compiler-explorer' session"))))
+                nil 'compiler-explorer-set-compiler-args-history)))
+     (user-error "Not in a `compiler-explorer' session")))
   (unless (compiler-explorer--active-p)
     (error "Not in a `compiler-explorer' session"))
   (setq compiler-explorer--compiler-arguments args)
