@@ -1382,23 +1382,25 @@ the same source line."
   "Minibuffer history for `compiler-explorer-set-compiler-args'.")
 
 (defvar compiler-explorer--popular-arguments-cache
-  (make-hash-table :test #'equal))
+  (make-hash-table :test #'equal)
+  "Hash table of popular arguments per compiler.")
 
-(defun compiler-explorer--capf-popular-arguments (compiler)
-  (let ((bounds (bounds-of-thing-at-point 'symbol))
-        (arguments
-         (or
-          (map-elt compiler-explorer--popular-arguments-cache compiler)
-          (setf (map-elt compiler-explorer--popular-arguments-cache compiler)
-                (compiler-explorer--request-sync
-                 nil
-                 (compiler-explorer--url "popularArguments" compiler)
-                 :headers '(("Accept" . "application/json"))
-                 :as (lambda ()
-                       (let ((json-key-type 'string))
-                         (json-parse-buffer))))))))
-    (unless bounds
-      (setq bounds (cons (point) (point))))
+(defun compiler-explorer--capf-popular-arguments ()
+  "Complete the argument at point using popular arguments."
+  (let* ((cid (plist-get compiler-explorer--compiler-data :id))
+         (bounds (or (bounds-of-thing-at-point 'symbol)
+                     (cons (point) (point))))
+         (arguments
+          (or
+           (map-elt compiler-explorer--popular-arguments-cache cid)
+           (setf (map-elt compiler-explorer--popular-arguments-cache cid)
+                 (compiler-explorer--request-sync
+                  nil
+                  (compiler-explorer--url "popularArguments" cid)
+                  :headers '(("Accept" . "application/json"))
+                  :as (lambda ()
+                        (let ((json-key-type 'string))
+                          (json-parse-buffer))))))))
     (list
      (car bounds) (cdr bounds) (hash-table-keys arguments)
      :annotation-function (lambda (completion)
@@ -1414,9 +1416,7 @@ the same source line."
            (lambda ()
              (setq-local
               completion-at-point-functions
-              (list (lambda ()
-                      (compiler-explorer--capf-popular-arguments
-                       (plist-get compiler-explorer--compiler-data :id))))))
+              (list #'compiler-explorer--capf-popular-arguments)))
          (list (read-from-minibuffer
                 "Compiler arguments: "
                 compiler-explorer--compiler-arguments
