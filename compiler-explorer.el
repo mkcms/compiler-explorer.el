@@ -140,10 +140,10 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
           (as #'compiler-explorer--parse-json)
           &allow-other-keys)
   "Perform sync `plz' request for URL, displaying WHAT with progress reporter."
-  (let ((pr (make-progress-reporter what)))
+  (let ((pr (and what (make-progress-reporter what))))
     (unwind-protect
         (apply #'plz method url :headers headers :as as args)
-      (progress-reporter-done pr))))
+      (and pr (progress-reporter-done pr)))))
 
 (defvar compiler-explorer--languages nil)
 (defun compiler-explorer--languages ()
@@ -1381,14 +1381,56 @@ the same source line."
 (defvar compiler-explorer-set-compiler-args-history nil
   "Minibuffer history for `compiler-explorer-set-compiler-args'.")
 
+(defvar compiler-explorer--popular-arguments-cache
+  (make-hash-table :test #'equal))
+
+(defun compiler-explorer--popular-arguments (compiler)
+  (or
+   (map-elt compiler-explorer--popular-arguments-cache compiler)
+   (setf (map-elt compiler-explorer--popular-arguments-cache compiler)
+         (compiler-explorer--request-sync
+          nil
+          (compiler-explorer--url "popularArguments" compiler)
+          :headers '(("Accept" . "application/json"))
+          :as (lambda ()
+                (let ((json-key-type 'string)) (json-parse-buffer)))))))
+
+(defun compiler-explorer--annotate (compiler completion)
+  (when-let* ((popular-arguments
+               (compiler-explorer--popular-arguments compiler))
+              (elt (map-elt popular-arguments completion))
+              (desc (map-elt elt "description")))
+    (concat " " desc)))
+
+(defun compiler-explorer--completing-read-helper (compiler)
+  (let ((bounds (bounds-of-thing-at-point 'symbol))
+        (popular-arguments
+         (compiler-explorer--popular-arguments compiler)))
+    (unless bounds
+      (setq bounds (cons (point) (point))))
+    (list (car bounds) (cdr bounds) (hash-table-keys popular-arguments))))
+
 (defun compiler-explorer-set-compiler-args (args)
   "Set compilation arguments to the string ARGS and recompile."
-  (interactive (list (if (compiler-explorer--active-p)
-                         (read-from-minibuffer
-                          "Compiler arguments: "
-                          compiler-explorer--compiler-arguments
-                          nil nil 'compiler-explorer-set-compiler-args-history)
-                       (user-error "Not in a `compiler-explorer' session"))))
+  (interactive
+   (list (if (compiler-explorer--active-p)
+             (minibuffer-with-setup-hook
+                 (lambda ()
+                   (setq-local completion-at-point-functions
+                               (list (apply-partially #'compiler-explorer--completing-read-helper (plist-get compiler-explorer--compiler-data :id)))))
+               (read-from-minibuffer
+                "Compiler arguments: "
+                nil
+                (let ((map (make-sparse-keymap)))
+                  (set-keymap-parent map minibuffer-local-map)
+                  (define-key map "\t"       #'completion-at-point)
+                  (define-key map [M-up]     #'minibuffer-previous-completion)
+                  (define-key map [M-down]   #'minibuffer-next-completion)
+                  (define-key map [?\M-\r]   #'minibuffer-choose-completion)
+                  map)
+                nil 'compiler-explorer-set-compiler-args-history
+                compiler-explorer--compiler-arguments))
+           (user-error "Not in a `compiler-explorer' session"))))
   (unless (compiler-explorer--active-p)
     (error "Not in a `compiler-explorer' session"))
   (setq compiler-explorer--compiler-arguments args)
