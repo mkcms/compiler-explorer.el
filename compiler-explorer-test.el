@@ -453,7 +453,8 @@ __attribute__((noinline)) int bar() { asm (\"\"); return -1; }
       (save-current-buffer
         (search-forward "+ c")
         (compiler-explorer-jump)
-        (should (string-match-p "\\badd\\b" (thing-at-point 'line)))))))
+        (should (string-match-p "\\badd\\b\\|\\(\\blea\\b.*987654320\\)"
+                                (thing-at-point 'line)))))))
 
 (provide 'compiler-explorer-test)
 ;;; compiler-explorer-test.el ends here
