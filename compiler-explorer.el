@@ -1716,8 +1716,6 @@ The source buffer is current when this hook runs.")
                       (set-auto-mode))))
 
       (insert example)
-      (add-hook 'after-change-functions #'compiler-explorer--after-change nil t)
-      (compiler-explorer-mode +1)
       (save-current-buffer (compiler-explorer-set-compiler compiler))
 
       (setq header-line-format
@@ -1734,6 +1732,8 @@ The source buffer is current when this hook runs.")
 
       (compiler-explorer--define-menu)
 
+      (compiler-explorer-mode +1)
+      (add-hook 'after-change-functions #'compiler-explorer--after-change nil t)
       (add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
 
       (pop-to-buffer (current-buffer))
