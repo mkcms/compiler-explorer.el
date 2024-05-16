@@ -1708,9 +1708,12 @@ The source buffer is current when this hook runs.")
     (with-current-buffer (generate-new-buffer compiler-explorer--buffer)
       ;; Find major mode by extension
       (cl-loop for ext across extensions
-               for filename = (concat "test" ext)
+               for filename = (expand-file-name (concat "test" ext)
+                                                default-directory)
                while (eq major-mode 'fundamental-mode)
-               do (let ((buffer-file-name filename)) (set-auto-mode)))
+               do (let ((buffer-file-name filename))
+                    (with-demoted-errors "compiler-explorer-new-session-1: %S"
+                      (set-auto-mode))))
 
       (insert example)
       (add-hook 'after-change-functions #'compiler-explorer--after-change nil t)
