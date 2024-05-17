@@ -40,11 +40,10 @@
   "Wait until compilation finishes."
   (with-timeout (15 (error "Test timed out"))
     (while (or (member compiler-explorer--recompile-timer timer-list)
-               (not (request-response-done-p
-                     compiler-explorer--last-compilation-request))
+               (process-live-p
+                compiler-explorer--last-compilation-request)
                (and compiler-explorer--last-exe-request
-                    (not (request-response-done-p
-                          compiler-explorer--last-exe-request))))
+                    (process-live-p compiler-explorer--last-exe-request)))
       (accept-process-output nil 0.1))))
 
 (defun compiler-explorer-test--help-message ()
@@ -118,20 +117,28 @@
 
 (ert-deftest compiler-explorer-api-asm-opcode-docs ()
   (with-temp-buffer
-    (compiler-explorer--asm-opcode-doc "amd64" "pushq" #'insert)
-    (with-timeout (5 (error "Test timed out"))
-      (while (= 0 (buffer-size))
-        (accept-process-output)))
-    (goto-char (point-min))
-    (should (search-forward "Decrements the stack pointer and then stores"))
-    (should (search-forward "source operand on the top of the stack")))
+    (let ((buf (current-buffer)))
+      (compiler-explorer--asm-opcode-doc "amd64" "pushq"
+                                         (lambda (doc)
+                                           (with-current-buffer buf
+                                             (insert doc))))
+      (with-timeout (5 (error "Test timed out"))
+        (while (= (buffer-size) 0)
+          (accept-process-output)))
+      (goto-char (point-min))
+      (should (search-forward "Decrements the stack pointer and then stores"))
+      (should (search-forward "source operand on the top of the stack"))))
   (with-temp-buffer
-    (compiler-explorer--asm-opcode-doc "python" "MAKE_FUNCTION" #'insert)
-    (with-timeout (5 (error "Test timed out"))
-      (while (= 0 (buffer-size))
-        (accept-process-output)))
-    (goto-char (point-min))
-    (should (search-forward "Pushes a new function object on the stack."))))
+    (let ((buf (current-buffer)))
+      (compiler-explorer--asm-opcode-doc "python" "MAKE_FUNCTION"
+                                         (lambda (doc)
+                                           (with-current-buffer buf
+                                             (insert doc))))
+      (with-timeout (5 (error "Test timed out"))
+        (while (= (buffer-size) 0)
+          (accept-process-output)))
+      (goto-char (point-min))
+      (should (search-forward "Pushes a new function object on the stack.")))))
 
 (ert-deftest compiler-explorer-api-examples ()
   (let ((examples (compiler-explorer--examples)))

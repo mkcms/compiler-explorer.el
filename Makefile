@@ -8,10 +8,9 @@ PACKAGE_INIT := --eval '(package-initialize)'
 TEST_ARGS := --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
 
 INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
-	(unless (package-installed-p `request)                                \
-	  (push (cons "melpa" "https://melpa.org/packages/") package-archives)\
+	(unless (package-installed-p `plz)                                    \
 	  (package-refresh-contents)                                          \
-	  (package-install `request)                                          \
+	  (package-install `plz)                                              \
 	  (package-install (cadr (assoc `map package-archive-contents)))      \
 	  (package-install (cadr (assoc `seq package-archive-contents)))      \
 	  (package-install (cadr (assoc `eldoc package-archive-contents)))))'
