@@ -99,7 +99,7 @@
     (require 'seq)
     (require 'map)))
 
-(defgroup compiler-explorer nil "Client for compiler-explorer service."
+(defgroup compiler-explorer nil "Client for compiler explorer service."
   :group 'tools)
 
 
@@ -151,7 +151,7 @@ proper headers and caches the request for checking if it's CE-related later."
 (defun compiler-explorer--request-callback-wrapper (oldfun &rest args)
   "Call OLDFUN with ARGS and a workaround for CE.
 
-In case this function is called to handle a compiler-explorer
+In case this function is called to handle a compiler explorer
 response, the logging to messages buffer is disabled, as
 `request' often spams this buffer with this useless message:
 
@@ -220,8 +220,8 @@ Keys are strings of the form \\='ISET:OPCODE\\=', where ISET is the
 compiler's :instructionSet.
 
 Values are strings, which contain the documentation for the
-opcode.  Values can also be `t', which means no
-documentation is available for the key.")
+opcode.  Values can also be t, which means no documentation is
+available for the key.")
 
 (defun compiler-explorer--asm-opcode-doc (instruction-set opcode callback)
   "Get documentation for OPCODE in INSTRUCTION-SET and call CALLBACK.
@@ -230,9 +230,9 @@ Opcode should be a string.  INSTRUCTION-SET should be a valid
 
 The return value will be:
 - nil if documentation is not available
-- `t' if it is (and callback was called).
+- t if it is (and callback was called)
 - the symbol \\='async if a request to get that documentation was
-  sent, but the documentation is not available yet."
+sent, but the documentation is not available yet."
   (let* ((key (format "%s:%s" instruction-set opcode))
          (cache compiler-explorer--asm-opcode-docs-cache)
          (resp (gethash key cache)))
@@ -290,10 +290,10 @@ Values are the example objects from API.")
          (map-elt compiler-explorer--cached-example-data key)
          (request-response-data
           (compiler-explorer--request-sync
-            (format "Fetching %S example %s" lang file)
-            (concat compiler-explorer-url "/source/builtin/load/" lang "/" file)
-            :headers '(("Accept" . "application/json"))
-            :parser #'compiler-explorer--parse-json))))))
+           (format "Fetching %S example %s" lang file)
+           (concat compiler-explorer-url "/source/builtin/load/" lang "/" file)
+           :headers '(("Accept" . "application/json"))
+           :parser #'compiler-explorer--parse-json))))))
 
 
 ;; Compilation
@@ -321,7 +321,7 @@ Values are the example objects from API.")
   "Alist of libraries for current session.
 Keys are library ids, values are lists (VERSION ENTRY), where
 VERSION is the id string of the version and ENTRY is the library
-entry from `compiler-explorer--libraries'.")
+entry from function `compiler-explorer--libraries'.")
 
 (defvar compiler-explorer--compiler-arguments ""
   "Arguments for the compiler.")
@@ -370,20 +370,22 @@ with `json-parse', and a message is displayed.")
                                                       :trim nil
                                                       :debugCalls nil)
   "Compiler output filters."
-  :type '(plist :key-type (choice
-                           (const :tag "Compile to binary" :binary)
-                           (const :tag "Compile to binary object" :binaryObject)
-                           (const :tag "Comments" :commentOnly)
-                           (const :tag "Demangle C++ symbols" :demangle)
-                           (const :tag "Directives" :directives)
-                           (const :tag "Intel ASM syntax" :intel)
-                           (const :tag "Unused labels" :labels)
-                           (const :tag "Library code" :libraryCode)
-                           (const :tag "Trim whitespace" :trim)
-                           (const :tag "Debug intrinsics" :debugCalls))
+  :type '(plist :key-type
+                (choice
+                 (const :tag "Compile to binary" :binary)
+                 (const :tag "Compile to binary object" :binaryObject)
+                 (const :tag "Comments" :commentOnly)
+                 (const :tag "Demangle C++ symbols" :demangle)
+                 (const :tag "Directives" :directives)
+                 (const :tag "Intel ASM syntax" :intel)
+                 (const :tag "Unused labels" :labels)
+                 (const :tag "Library code" :libraryCode)
+                 (const :tag "Trim whitespace" :trim)
+                 (const :tag "Debug intrinsics" :debugCalls))
                 :value-type boolean))
 
 (defun compiler-explorer--filter-enabled-p (filter)
+  "Return non-nil if FILTER can be used in the current session."
   (pcase-let (((map :supportsBinary :supportsBinaryObject
                     :supportsLibraryCodeFilter :supportsDemangle
                     :supportsIntel
@@ -609,7 +611,8 @@ output buffer."
     (&key data &allow-other-keys)
   "Handle execution response contained in DATA."
   (pcase-let (((map :stdout :stderr :code) data))
-    (with-current-buffer (get-buffer-create compiler-explorer--exe-output-buffer)
+    (with-current-buffer
+        (get-buffer-create compiler-explorer--exe-output-buffer)
       (compiler-explorer-mode +1)
       (setq buffer-read-only t)
       (setq buffer-undo-list t)
@@ -655,7 +658,8 @@ output buffer."
                                        (request-response-status-code resp)
                                        (request-response-error-thrown resp))))
               (t
-               (pcase-let (((map :stdout :stderr) (request-response-data resp)))
+               (pcase-let (((map :stdout :stderr)
+                            (request-response-data resp)))
                  (propertize
                   (format "%s (%s/%s)"
                           (propertize "Done" 'face 'success)
@@ -668,14 +672,16 @@ output buffer."
                                (save-excursion
                                  (goto-char (point-min))
                                  (forward-line 30)
-                                 (concat (buffer-substring (point-min)
-                                                           (line-beginning-position))
-                                         (unless (= (line-beginning-position) (point-max))
-                                           (concat "... message truncated. "
-                                                   "See output buffer to "
-                                                   "show all.\n"))
-                                         "\nmouse-1: "
-                                         " Show output buffer."))))))))
+                                 (concat
+                                  (buffer-substring (point-min)
+                                                    (line-beginning-position))
+                                  (unless (= (line-beginning-position)
+                                             (point-max))
+                                    (concat "... message truncated. "
+                                            "See output buffer to "
+                                            "show all.\n"))
+                                  "\nmouse-1: "
+                                  " Show output buffer."))))))))
      'mouse-face 'mode-line-highlight
      'keymap (let ((map (make-keymap)))
                (define-key map [header-line mouse-1]
@@ -741,8 +747,10 @@ output buffer."
       (format "Libs: %s"  (length compiler-explorer--selected-libraries))
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1] #'compiler-explorer-add-library)
-                (define-key map [header-line mouse-2] #'compiler-explorer-remove-library)
+                (define-key map [header-line mouse-1]
+                            #'compiler-explorer-add-library)
+                (define-key map [header-line mouse-2]
+                            #'compiler-explorer-remove-library)
                 map)
       'help-echo (concat
                   "Libraries:\n"
@@ -813,12 +821,13 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
               (plist-get compiler-explorer--language-data :example))
              (with-current-buffer compiler-explorer--buffer
                (string-trim (buffer-string))))))
-      ;; Save last session.  Don't insert it into the ring, as that would make us
-      ;; cycle between only 2 sessions when calling
+      ;; Save last session.  Don't insert it into the ring, as that would make
+      ;; us cycle between only 2 sessions when calling
       ;; `compiler-explorer-previous-session'.
       ;;
       ;; Don't save it if it is unmodified from example.
-      (setq compiler-explorer--last-session (compiler-explorer--current-session))
+      (setq compiler-explorer--last-session
+            (compiler-explorer--current-session))
     (setq compiler-explorer--last-session nil))
 
   ;; Abort last request and cancel the timer for recompilation.
@@ -1004,7 +1013,8 @@ the minibuffer and separate help buffers."
   :type 'boolean)
 
 (defun compiler-explorer--compilation-eldoc-documentation-function (callback)
-  "Eldoc func for `compiler-explorer' which calls CALLBACK with opcode docs."
+  "Call CALLBACK with the documentation for opcode at point.
+This is eldoc function for compiler explorer."
   (when-let ((opcode (thing-at-point 'symbol)))
     (compiler-explorer--asm-opcode-doc
      (plist-get compiler-explorer--compiler-data :instructionSet)
@@ -1067,7 +1077,8 @@ the minibuffer and separate help buffers."
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
   (pcase-let
-      (((map :version :lang-name :compiler :libs :args :exe-args :input :source)
+      (((map :version :lang-name :compiler :libs :args :exe-args :input
+             :source)
         session))
     (or version (setq version 0))
     (when (> version 1)
@@ -1114,7 +1125,7 @@ It must have been created with `compiler-explorer--current-session'."
   "Keymap used in `compiler-explorer-mode'.")
 
 (define-minor-mode compiler-explorer-mode
-  "Minor mode used in compiler-explorer buffers."
+  "Minor mode used in compiler explorer buffers."
   :lighter " CE"
   :keymap compiler-explorer-mode-map
   (cond
@@ -1156,8 +1167,9 @@ It must have been created with `compiler-explorer--current-session'."
        ,@(let ((compilers
                 (cl-remove-if
                  (pcase-lambda ((map :lang))
-                   (not (string= lang
-                                 (plist-get compiler-explorer--language-data :id))))
+                   (not
+                    (string= lang (plist-get
+                                   compiler-explorer--language-data :id))))
                  (compiler-explorer--compilers)))
                (by-group (make-hash-table :test #'equal)))
            (cl-loop for compiler across compilers
@@ -1267,8 +1279,7 @@ is a symbol, either:
  - `compiler-args'
  - `execution-args'
 
-VALUE is the new value, a string.
-")
+VALUE is the new value, a string.")
 
 (defun compiler-explorer-jump (&optional which)
   "Jump to corresponding ASM block or source code line.
@@ -1276,10 +1287,14 @@ From source buffer, jump to the first ASM block for the line at
 point.  From ASM buffer, jump to the source buffer and line for
 the instruction at point.
 
-With a non-numeric prefix argument, jumps to the NEXT region that
-maps to this source line, or to the source line itself.  Thus,
-repeatedly calling this command with non-numeric prefix argument
-will go through all related ASM blocks for one source code block.
+From Lisp, WHICH is the index of the block to jump to (modulo the
+number of blocks for the source code line associated with point).
+
+Interactively, with a non-numeric prefix argument, jumps to the
+NEXT region that maps to this source line, or to the source line
+itself.  Thus, repeatedly calling this command with non-numeric
+prefix argument will go through all related ASM blocks for one
+source code block.
 
 With a numeric prefix argument, jumps to the Nth ASM block for
 the same source line."
@@ -1666,7 +1681,8 @@ With an optional prefix argument OPEN, open that link in a browser."
                           ])]))
          (response
           (request-response-data
-           (compiler-explorer--request (concat compiler-explorer-url "/shortener")
+           (compiler-explorer--request
+             (concat compiler-explorer-url "/shortener")
              :sync t
              :type "POST"
              :headers '(("Accept" . "application/json")
@@ -1683,7 +1699,9 @@ With an optional prefix argument OPEN, open that link in a browser."
 The source buffer is current when this hook runs.")
 
 (defun compiler-explorer-new-session-1 (lang &optional compiler)
-  "Subr of `compiler-explorer-new-session' that uses given LANG and COMPILER."
+  "Start new session for LANG.
+This is a subr of `compiler-explorer-new-session' that uses given
+LANG and COMPILER."
   (when (fboundp #'request--callback)
     (advice-add #'request--callback
                 :around
@@ -1733,7 +1751,8 @@ The source buffer is current when this hook runs.")
       (compiler-explorer--define-menu)
 
       (compiler-explorer-mode +1)
-      (add-hook 'after-change-functions #'compiler-explorer--after-change nil t)
+      (add-hook 'after-change-functions
+                #'compiler-explorer--after-change nil t)
       (add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
 
       (pop-to-buffer (current-buffer))

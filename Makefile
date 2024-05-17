@@ -19,22 +19,22 @@ INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
 # Sexp to fill paragraphs in the commentary section.
 FILL_COMMENTARY := --eval '(progn                                             \
 	(delete-trailing-whitespace)                                          \
-        (setq fill-column 74)                                                 \
+	(setq fill-column 74)                                                 \
 	(fill-individual-paragraphs (search-forward "Commentary:")            \
 	                            (search-forward "Code:"))                 \
 	(save-buffer))'
 
 KEYMAP := --eval '(dolist (elt                                                \
-        `((,(kbd "<f2> <f2>") . compiler-explorer)                            \
-          (,(kbd "<f2> p") . compiler-explorer-previous-session)              \
-          (,(kbd "<f2> n") . compiler-explorer-new-session)                   \
-          (,(kbd "<f2> c") . compiler-explorer-set-compiler)                  \
-          (,(kbd "<f2> a") . compiler-explorer-set-compiler-args)             \
-          (,(kbd "<f2> l") . compiler-explorer-layout)                        \
-          (,(kbd "<f2> L") . compiler-explorer-make-link)                     \
-          (,(kbd "<f2> e") . compiler-explorer-show-output)                   \
-          (,(kbd "C-c e RET") . compiler-explorer-jump)                       \
-          (,(kbd "<f2> q") . compiler-explorer-exit)))                        \
+	`((,(kbd "<f2> <f2>") . compiler-explorer)                            \
+	  (,(kbd "<f2> p") . compiler-explorer-previous-session)              \
+	  (,(kbd "<f2> n") . compiler-explorer-new-session)                   \
+	  (,(kbd "<f2> c") . compiler-explorer-set-compiler)                  \
+	  (,(kbd "<f2> a") . compiler-explorer-set-compiler-args)             \
+	  (,(kbd "<f2> l") . compiler-explorer-layout)                        \
+	  (,(kbd "<f2> L") . compiler-explorer-make-link)                     \
+	  (,(kbd "<f2> e") . compiler-explorer-show-output)                   \
+	  (,(kbd "C-c e RET") . compiler-explorer-jump)                       \
+	  (,(kbd "<f2> q") . compiler-explorer-exit)))                        \
   (global-set-key (car elt) (cdr elt)))'
 
 .PHONY: deps
@@ -53,11 +53,20 @@ check: ${ELC}
 	      -L . -l compiler-explorer -l compiler-explorer-test             \
 	      --eval '(ert-run-tests-batch-and-exit "${SELECTOR}")'
 
+lint:
+	file=$$(mktemp)                                                       \
+	&& ${emacs} -Q --batch compiler-explorer.el                           \
+		--eval '(checkdoc-file (buffer-file-name))' 2>&1 | tee $$file \
+	&& test -z "$$(cat $$file)"                                           \
+	&& (grep -n -E "^.{80,}" compiler-explorer.el `# Catch long lines`    \
+	    | sed                                                             \
+		-r '1d;2d;s/^([0-9]+).*/compiler-explorer.el:\1: Too long/;q1')
+
 # Run emacs -Q with packages installed and compiler-explorer loaded
 _baremacs: ${ELC}
 	rm -f test-sessions.el;                                               \
 	${emacs} -Q ${PACKAGE_INIT} ${KEYMAP} ${TEST_ARGS}                    \
-                -L . -l compiler-explorer -l compiler-explorer-test
+	        -L . -l compiler-explorer -l compiler-explorer-test
 
 readme-to-el:
 	sed README.md -r                                                      \
