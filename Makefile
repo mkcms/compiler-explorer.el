@@ -44,7 +44,9 @@ deps:
 compile: deps $(ELC)
 
 %.elc: %.el
-	${emacs} -Q --batch ${PACKAGE_INIT} -L . -f batch-byte-compile $<
+	${emacs} -Q --batch ${PACKAGE_INIT} -L .                              \
+	    --eval '(setq byte-compile-error-on-warn t)'                      \
+	    -f batch-byte-compile $<
 
 check: ${ELC}
 	${emacs} -Q --batch ${PACKAGE_INIT} ${TEST_ARGS}                      \
