@@ -784,6 +784,7 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (if (and
        (not skip-save-session)
        (buffer-live-p (get-buffer compiler-explorer--buffer))
+       (stringp (plist-get compiler-explorer--language-data :example))
        (not (string=
              (string-trim
               (plist-get compiler-explorer--language-data :example))
@@ -799,28 +800,33 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
     (setq compiler-explorer--last-session nil))
 
   ;; Abort last request and cancel the timer for recompilation.
-  (when-let ((req compiler-explorer--last-compilation-request))
-    (when (process-live-p req)
-      (delete-process req)))
-  (when-let ((req compiler-explorer--last-exe-request))
-    (when (process-live-p req)
-      (delete-process req)))
-  (setq compiler-explorer--last-compilation-request nil)
-  (setq compiler-explorer--last-exe-request nil)
-  (when compiler-explorer--recompile-timer
-    (cancel-timer compiler-explorer--recompile-timer)
-    (setq compiler-explorer--recompile-timer nil))
+  (with-demoted-errors "compiler-explorer--cleanup: %s"
+    (when-let ((req compiler-explorer--last-compilation-request))
+      (when (process-live-p req)
+        (delete-process req)))
+    (when-let ((req compiler-explorer--last-exe-request))
+      (when (process-live-p req)
+        (delete-process req)))
+    (when compiler-explorer--recompile-timer
+      (cancel-timer compiler-explorer--recompile-timer)))
 
+  ;; Kill all of our buffers.
   (mapc (lambda (buffer)
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
               (let ((kill-buffer-hook
-                     (remq #'compiler-explorer--cleanup kill-buffer-hook)))
-                (kill-buffer (current-buffer))))))
+                     (remq #'compiler-explorer--cleanup kill-buffer-hook))
+                    (kill-buffer-query-functions nil))
+                (with-demoted-errors "compiler-explorer--cleanup: %s"
+                  (kill-buffer (current-buffer)))))))
         (list (get-buffer compiler-explorer--buffer)
               (get-buffer compiler-explorer--compiler-buffer)
               (get-buffer compiler-explorer--output-buffer)
               (get-buffer compiler-explorer--exe-output-buffer)))
+
+  (setq compiler-explorer--last-compilation-request nil)
+  (setq compiler-explorer--recompile-timer nil)
+  (setq compiler-explorer--last-exe-request nil)
   (setq compiler-explorer--compiler-data nil)
   (setq compiler-explorer--selected-libraries nil)
   (setq compiler-explorer--language-data nil)
@@ -828,8 +834,8 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (setq compiler-explorer--execution-arguments "")
   (setq compiler-explorer--execution-input "")
 
-  (with-demoted-errors "compiler-explorer--cleanup: delete-directory: %s"
-    (when compiler-explorer--project-dir
+  (when compiler-explorer--project-dir
+    (with-demoted-errors "compiler-explorer--cleanup: delete-directory: %s"
       (delete-directory compiler-explorer--project-dir t)))
   (setq compiler-explorer--project-dir nil))
 
@@ -1051,6 +1057,16 @@ It must have been created with `compiler-explorer--current-session'."
     (or version (setq version 0))
     (when (> version 1)
       (error "Don't know how to restore session version %s" version))
+    (pcase-dolist (`(,sym ,val ,pred) `((version ,version integerp)
+                                        (lang-name ,lang-name stringp)
+                                        (compiler ,compiler stringp)
+                                        (libs ,libs listp)
+                                        (args ,args stringp)
+                                        (exe-args ,exe-args stringp)
+                                        (input ,input stringp)
+                                        (source ,source stringp)))
+      (unless (funcall pred val)
+        (error "Invalid %s: %s" sym val)))
 
     (compiler-explorer-new-session lang-name compiler)
     (with-current-buffer (get-buffer compiler-explorer--buffer)
@@ -1077,10 +1093,12 @@ It must have been created with `compiler-explorer--current-session'."
       (ring-insert compiler-explorer--session-ring current-session))
     (with-temp-file compiler-explorer-sessions-file
       (insert ";; Auto-generated file; don't edit -*- mode: lisp-data -*-\n")
-      (print
-       (cons 1                          ;version
-             (ring-elements compiler-explorer--session-ring))
-       (current-buffer)))))
+      (let ((print-length nil)
+            (print-level nil))
+        (print
+         (cons 1                        ;version
+               (ring-elements compiler-explorer--session-ring))
+         (current-buffer))))))
 
 
 ;; User commands & modes
