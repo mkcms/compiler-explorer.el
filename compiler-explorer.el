@@ -1135,7 +1135,7 @@ It must have been created with `compiler-explorer--current-session'."
           (pcase-lambda ((map :name))
             (vector name (lambda ()
                            (interactive)
-                           (compiler-explorer-new-session name))))
+                           (compiler-explorer-new-session name t))))
           (seq-sort-by (lambda (lang) (plist-get lang :name))
                        #'string<
                        (compiler-explorer--languages))))
@@ -1681,10 +1681,10 @@ With an optional prefix argument OPEN, open that link in a browser."
   "Hook run after creating new session.
 The source buffer is current when this hook runs.")
 
-(defun compiler-explorer-new-session-1 (lang &optional compiler)
+(defun compiler-explorer-new-session-1 (lang &optional compiler interactive)
   "Start new session for LANG.
 This is a subr of `compiler-explorer-new-session' that uses given
-LANG and COMPILER."
+LANG, COMPILER, INTERACTIVE."
   (compiler-explorer--cleanup)
   (when-let ((session compiler-explorer--last-session))
     (ring-insert compiler-explorer--session-ring session)
@@ -1712,7 +1712,12 @@ LANG and COMPILER."
                       (set-auto-mode))))
 
       (insert example)
-      (save-current-buffer (compiler-explorer-set-compiler compiler))
+      (save-current-buffer
+        (condition-case err
+            (compiler-explorer-set-compiler compiler)
+          (error (if interactive
+                     (call-interactively #'compiler-explorer-set-compiler)
+                   (signal (car err) (cdr err))))))
 
       (setq header-line-format
             `(:eval (compiler-explorer--header-line-format-source)))
@@ -1744,17 +1749,26 @@ If a session already exists, it is killed and saved to the
 session ring.
 
 Always runs hooks in `compiler-explorer-new-session-hook' at the
-end, with the source buffer as current."
+end, with the source buffer as current.
+
+If COMPILER is t, then use the default compiler for this
+language, and if that fails, prompt the user to select another
+compiler."
   (interactive
    (list (completing-read "Language: "
                           (mapcar (lambda (lang) (plist-get lang :name))
                                   (compiler-explorer--languages))
                           nil t)
-         nil))
-  (condition-case err
-      (compiler-explorer-new-session-1 lang compiler)
-    (error (compiler-explorer--cleanup 'skip-save-session)
-           (signal (car err) (cdr err)))))
+         t))
+  (let (success)
+    (unwind-protect
+        (progn
+          (compiler-explorer-new-session-1 lang
+                                           (if (eq compiler t) nil compiler)
+                                           (eq compiler t))
+          (setq success t))
+      (unless success
+        (compiler-explorer--cleanup 'skip-save-session)))))
 
 (defun compiler-explorer-exit ()
   "Kill the current session."
