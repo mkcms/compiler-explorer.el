@@ -38,3 +38,6 @@ jobs:
 
       - name: Lint
         run: make lint
+
+      - name: Packaging checks
+        run: make checkinstall

@@ -15,6 +15,13 @@ INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
 	  (package-install (cadr (assoc `seq package-archive-contents)))      \
 	  (package-install (cadr (assoc `eldoc package-archive-contents)))))'
 
+INSTALL_FROM_MELPA := ${PACKAGE_INIT} --eval '(progn                          \
+	(unless (package-installed-p `compiler-explorer)                      \
+	  (add-to-list `package-archives                                      \
+		(quote ("melpa" . "https://melpa.org/packages/")))            \
+	  (package-refresh-contents)                                          \
+	  (package-install `compiler-explorer)))'
+
 # Sexp to fill paragraphs in the commentary section.
 FILL_COMMENTARY := --eval '(progn                                             \
 	(delete-trailing-whitespace)                                          \
@@ -51,6 +58,9 @@ check: ${ELC}
 	${emacs} -Q --batch ${PACKAGE_INIT} ${TEST_ARGS}                      \
 	      -L . -l compiler-explorer -l compiler-explorer-test             \
 	      --eval '(ert-run-tests-batch-and-exit "${SELECTOR}")'
+
+checkinstall:
+	${emacs} -Q --batch ${PACKAGE_INIT} ${INSTALL_FROM_MELPA}
 
 lint:
 	file=$$(mktemp)                                                       \
