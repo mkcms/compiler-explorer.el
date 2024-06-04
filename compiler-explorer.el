@@ -483,7 +483,7 @@ contents are replaced destructively and point is not preserved."
   "Handle compilation response contained in RESPONSE."
   (pcase-let (((map :asm :stdout :stderr :code) response)
               (compiler (get-buffer compiler-explorer--compiler-buffer))
-              (output (get-buffer-create compiler-explorer--output-buffer))
+              (output (get-buffer compiler-explorer--output-buffer))
               (source-to-asm-mappings nil))
     (with-current-buffer compiler
       (with-temp-buffer
@@ -500,17 +500,7 @@ contents are replaced destructively and point is not preserved."
         (compiler-explorer--replace-buffer-contents compiler (current-buffer)))
 
       (when compiler-explorer-source-to-asm-mappings
-        (compiler-explorer--build-overlays source-to-asm-mappings))
-      (when compiler-explorer-document-opcodes
-        (add-hook
-         'eldoc-documentation-functions
-         'compiler-explorer--compilation-eldoc-documentation-function nil t)
-        (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
-        (eldoc-mode +1))
-
-      ;; Make the ASM view more like godbolt.org.
-      ;; TODO: this should be only set once - when this buffer is created.
-      (setq truncate-lines t))
+        (compiler-explorer--build-overlays source-to-asm-mappings)))
 
     ;; Update output buffer
     (with-current-buffer output
@@ -526,15 +516,6 @@ contents are replaced destructively and point is not preserved."
       (let ((buffer-read-only nil))
         (ansi-color-apply-on-region (point-min) (point-max)))
 
-      (setq buffer-read-only t)
-      (unless (eq major-mode 'compilation-mode)
-        (compilation-mode)
-        (setq buffer-undo-list t))
-      (compiler-explorer-mode +1)
-      (when compiler-explorer--project-dir
-        (setq-local default-directory compiler-explorer--project-dir)
-        (setq-local compilation-parse-errors-filename-function
-                    #'compiler-explorer--compilation-parse-errors-filename))
       (with-demoted-errors "compilation-parse-errors: %s"
         (let ((buffer-read-only nil))
           (compilation-parse-errors (point-min) (point-max))))))
@@ -544,12 +525,7 @@ contents are replaced destructively and point is not preserved."
   "Update the execution output buffer with info about unsupported compiler.
 This will write the list of supported compilers in the execution
 output buffer."
-  (with-current-buffer (get-buffer-create compiler-explorer--exe-output-buffer)
-    (compiler-explorer-mode +1)
-    (setq buffer-read-only t)
-    (setq buffer-undo-list t)
-    (setq header-line-format
-          `(:eval (compiler-explorer--header-line-format-executor)))
+  (with-current-buffer compiler-explorer--exe-output-buffer
     (let ((buffer-read-only nil)
           (keymap (make-keymap))
           (compiler (plist-get compiler-explorer--compiler-data :name))
@@ -579,13 +555,7 @@ output buffer."
 (defun compiler-explorer--handle-execution-response (response)
   "Handle execution response contained in RESPONSE."
   (pcase-let (((map :stdout :stderr :code) response))
-    (with-current-buffer
-        (get-buffer-create compiler-explorer--exe-output-buffer)
-      (compiler-explorer-mode +1)
-      (setq buffer-read-only t)
-      (setq buffer-undo-list t)
-      (setq header-line-format
-            `(:eval (compiler-explorer--header-line-format-executor)))
+    (with-current-buffer compiler-explorer--exe-output-buffer
       (let ((buffer-read-only nil)
             (buf (current-buffer)))
         (with-temp-buffer
@@ -777,6 +747,7 @@ output buffer."
   (restore-buffer-modified-p nil))
 
 (defvar compiler-explorer--last-session)
+(defvar compiler-explorer-mode)
 
 (defun compiler-explorer--cleanup (&optional skip-save-session)
   "Kill current session.
@@ -814,11 +785,13 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (mapc (lambda (buffer)
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
-              (let ((kill-buffer-hook
-                     (remq #'compiler-explorer--cleanup kill-buffer-hook))
-                    (kill-buffer-query-functions nil))
-                (with-demoted-errors "compiler-explorer--cleanup: %s"
-                  (kill-buffer (current-buffer)))))))
+              (let ((kill-buffer-query-functions nil))
+                ;; Give `kill-buffer-hook' a chance to run, but if they fail to
+                ;; kill the buffer, kill it forcibly without running them.
+                (unless (save-current-buffer
+                          (ignore-errors (kill-buffer buffer)))
+                  (let ((kill-buffer-hook nil))
+                    (kill-buffer (current-buffer))))))))
         (list (get-buffer compiler-explorer--buffer)
               (get-buffer compiler-explorer--compiler-buffer)
               (get-buffer compiler-explorer--output-buffer)
@@ -837,7 +810,10 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (when compiler-explorer--project-dir
     (with-demoted-errors "compiler-explorer--cleanup: delete-directory: %s"
       (delete-directory compiler-explorer--project-dir t)))
-  (setq compiler-explorer--project-dir nil))
+  (setq compiler-explorer--project-dir nil)
+
+  (when compiler-explorer-mode
+    (compiler-explorer-mode -1)))
 
 
 ;; Source<->ASM overlays
@@ -1108,21 +1084,58 @@ It must have been created with `compiler-explorer--current-session'."
   (bufferp (get-buffer compiler-explorer--buffer)))
 
 (defvar compiler-explorer-mode-map (make-sparse-keymap)
-  "Keymap used in `compiler-explorer-mode'.")
+  "Keymap used in all compiler explorer buffers.")
 
-(define-minor-mode compiler-explorer-mode
-  "Minor mode used in compiler explorer buffers."
+(define-minor-mode compiler-explorer--local-mode
+  "Minor mode used in all compiler explorer buffers."
+  :lighter ""
+  (add-hook 'kill-buffer-hook #'compiler-explorer--cleanup nil t)
+  (add-hook 'project-find-functions
+            #'compiler-explorer--project-find-function nil t)
+
+  (when compiler-explorer--project-dir
+    (setq-local default-directory compiler-explorer--project-dir))
+
+  (pcase (buffer-name)
+    ((pred (equal compiler-explorer--buffer))
+     (setq header-line-format
+           `(:eval (compiler-explorer--header-line-format-source)))
+     (add-hook 'after-change-functions
+               #'compiler-explorer--after-change nil t))
+    ((pred (equal compiler-explorer--compiler-buffer))
+     (setq header-line-format
+           `(:eval (compiler-explorer--header-line-format-compiler)))
+     (setq truncate-lines t)           ;Make the ASM view more like godbolt.org
+     (when compiler-explorer-document-opcodes
+       (add-hook
+        'eldoc-documentation-functions
+        'compiler-explorer--compilation-eldoc-documentation-function nil t)
+       (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
+       (eldoc-mode +1)))
+    ((pred (equal compiler-explorer--output-buffer))
+     (setq-local compilation-parse-errors-filename-function
+                 #'compiler-explorer--compilation-parse-errors-filename))
+    ((pred (equal compiler-explorer--exe-output-buffer))
+     (setq header-line-format
+           `(:eval (compiler-explorer--header-line-format-executor))))))
+
+(defun compiler-explorer--local-mode-maybe-enable ()
+  "Enable `compiler-explorer--local-mode' if required."
+  (when (memq (current-buffer)
+              (list
+               (get-buffer compiler-explorer--buffer)
+               (get-buffer compiler-explorer--compiler-buffer)
+               (get-buffer compiler-explorer--output-buffer)
+               (get-buffer compiler-explorer--exe-output-buffer)))
+    (compiler-explorer--local-mode +1)))
+
+(define-globalized-minor-mode compiler-explorer-mode
+  compiler-explorer--local-mode
+  compiler-explorer--local-mode-maybe-enable
   :lighter " CE"
   :keymap compiler-explorer-mode-map
-  (cond
-   (compiler-explorer-mode
-    (add-hook 'kill-buffer-hook #'compiler-explorer--cleanup nil t)
-    (add-hook 'project-find-functions
-              #'compiler-explorer--project-find-function nil t))
-   (t
-    (remove-hook 'kill-buffer-hook #'compiler-explorer--cleanup t)
-    (remove-hook 'project-find-functions
-                 #'compiler-explorer--project-find-function t))))
+  (unless compiler-explorer-mode
+    (compiler-explorer--cleanup)))
 
 (defun compiler-explorer--define-menu ()
   "Define a menu in the menu bar for `compiler-explorer' commands."
@@ -1413,16 +1426,7 @@ execution."
     (unless compiler-data
       (error "No compiler %S for lang %S" name-or-id lang-id))
     (setq compiler-explorer--compiler-data compiler-data)
-    (with-current-buffer (get-buffer-create compiler-explorer--compiler-buffer)
-      (asm-mode)
-
-      (compiler-explorer-mode +1)
-
-      (setq buffer-read-only t)
-      (setq buffer-undo-list t)
-      (setq header-line-format
-            `(:eval (compiler-explorer--header-line-format-compiler)))
-
+    (with-current-buffer (get-buffer compiler-explorer--compiler-buffer)
       (compiler-explorer--request-async)
 
       (pop-to-buffer (current-buffer))
@@ -1583,10 +1587,10 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
                                          compiler-explorer--compiler-buffer))
            ('output (override-window-buffer
                      (selected-window)
-                     (get-buffer-create compiler-explorer--output-buffer)))
+                     (get-buffer compiler-explorer--output-buffer)))
            ('exe (override-window-buffer
                   (selected-window)
-                  (get-buffer-create compiler-explorer--exe-output-buffer)))
+                  (get-buffer compiler-explorer--exe-output-buffer)))
            (`(,left . ,right)
             (let ((right-window (split-window-right)))
               (do-it left)
@@ -1602,7 +1606,7 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
       (setq layout (% layout (length compiler-explorer-layouts)))
       (setq compiler-explorer--last-layout layout))
     (when (window-dedicated-p)
-      (unless compiler-explorer-mode
+      (unless compiler-explorer--local-mode
         (select-window (split-window-horizontally)))
       (set-window-dedicated-p (selected-window) nil))
     (delete-other-windows)
@@ -1685,10 +1689,34 @@ The source buffer is current when this hook runs.")
   "Start new session for LANG.
 This is a subr of `compiler-explorer-new-session' that uses given
 LANG, COMPILER, INTERACTIVE."
+  ;; Clean everything up
   (compiler-explorer--cleanup)
   (when-let ((session compiler-explorer--last-session))
     (ring-insert compiler-explorer--session-ring session)
     (setq compiler-explorer--last-session nil))
+
+  ;; Enter session mode
+  (compiler-explorer-mode +1)
+
+  ;; Generate temporary directory if needed
+  (setq compiler-explorer--project-dir
+        (and compiler-explorer-make-temp-file
+             (make-temp-file "compiler-explorer" 'dir)))
+
+  ;; Generate all the buffers
+  (pcase-dolist (`(,buf ,mode ,ro)
+                 `((,compiler-explorer--buffer fundamental-mode nil)
+                   (,compiler-explorer--compiler-buffer asm-mode t)
+                   (,compiler-explorer--output-buffer compilation-mode t)
+                   (,compiler-explorer--exe-output-buffer text-mode t)))
+    (with-current-buffer (generate-new-buffer buf)
+      (with-demoted-errors "compiler-explorer-new-session-1: %S"
+        (funcall mode))
+      (setq buffer-read-only ro)
+      (setq buffer-undo-list ro)))
+
+  ;; Do the rest of the initialization: set up the source buffer and set the
+  ;; compiler.
 
   (pcase-let* ((lang-data (or (cl-find lang (compiler-explorer--languages)
                                        :key (lambda (l) (plist-get l :name))
@@ -1701,7 +1729,7 @@ LANG, COMPILER, INTERACTIVE."
     (ignore (compiler-explorer--libraries id))
     (ignore (compiler-explorer--examples id))
 
-    (with-current-buffer (generate-new-buffer compiler-explorer--buffer)
+    (with-current-buffer compiler-explorer--buffer
       ;; Find major mode by extension
       (cl-loop for ext across extensions
                for filename = (expand-file-name (concat "test" ext)
@@ -1719,24 +1747,13 @@ LANG, COMPILER, INTERACTIVE."
                      (call-interactively #'compiler-explorer-set-compiler)
                    (signal (car err) (cdr err))))))
 
-      (setq header-line-format
-            `(:eval (compiler-explorer--header-line-format-source)))
-
-      (when compiler-explorer-make-temp-file
-        (setq compiler-explorer--project-dir
-              (make-temp-file "compiler-explorer" 'dir))
-        (setq-local default-directory compiler-explorer--project-dir)
+      (when compiler-explorer--project-dir
         (setq buffer-file-name
               (expand-file-name (concat "source" (aref extensions 0))
                                 compiler-explorer--project-dir))
         (let ((save-silently t)) (save-buffer)))
 
       (compiler-explorer--define-menu)
-
-      (compiler-explorer-mode +1)
-      (add-hook 'after-change-functions
-                #'compiler-explorer--after-change nil t)
-      (add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
 
       (pop-to-buffer (current-buffer))
       (run-hooks 'compiler-explorer-new-session-hook))))
@@ -1800,6 +1817,8 @@ The hook `compiler-explorer-hook' is always run at the end."
      (t
       (call-interactively #'compiler-explorer-new-session))))
   (run-hooks 'compiler-explorer-hook))
+
+(add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
 
 (provide 'compiler-explorer)
 ;;; compiler-explorer.el ends here
