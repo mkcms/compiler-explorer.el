@@ -371,10 +371,13 @@ with `json-parse', and a message is displayed.")
            if (compiler-explorer--filter-enabled-p k)
            nconc (list k (or v :json-false))))
 
-(defun compiler-explorer--request-async ()
-  "Queue compilation and execution and return immediately.
-This calls `compiler-explorer--handle-compilation-response' and
-`compiler-explorer--handle-execution-response' once the responses arrive."
+(defvar compiler-explorer--inhibit-request nil
+  "If non-nil, inhibit making the async compilation/execution request.
+This can be temporarily let-bound to defer making async requests
+when multiple functions try to do it in a block of code.")
+
+(defun compiler-explorer--request-async-1 ()
+  "Subr of `compiler-explorer--request-async'."
   (pcase-dolist
       (`(,executorRequest ,symbol ,handler)
        `((:json-false
@@ -435,6 +438,13 @@ This calls `compiler-explorer--handle-compilation-response' and
     (compiler-explorer--handle-compiler-with-no-execution))
   (compiler-explorer--build-overlays nil)
   (force-mode-line-update))
+
+(defun compiler-explorer--request-async ()
+  "Queue compilation and execution and return immediately.
+This calls `compiler-explorer--handle-compilation-response' and
+`compiler-explorer--handle-execution-response' once the responses arrive."
+  (unless compiler-explorer--inhibit-request
+    (compiler-explorer--request-async-1)))
 
 (defvar compiler-explorer--project-dir)
 
@@ -570,6 +580,9 @@ output buffer."
           (insert (format "Program exited with code %s" code))
           (compiler-explorer--replace-buffer-contents buf (current-buffer)))
         (ansi-color-apply-on-region (point-min) (point-max))))))
+
+
+;; UI
 
 (defun compiler-explorer--header-line-format-common ()
   "Get the mode line template used in compiler explorer mode."
@@ -1052,17 +1065,19 @@ It must have been created with `compiler-explorer--current-session'."
       (unless (funcall pred val)
         (error "Invalid %s: %s" sym val)))
 
-    (compiler-explorer-new-session lang-name compiler)
-    (with-current-buffer (get-buffer compiler-explorer--buffer)
-      (let ((inhibit-modification-hooks t))
-        (erase-buffer)
-        (insert source)
-        (set-buffer-modified-p nil)))
-    (pcase-dolist (`(,id . ,vid) libs)
-      (compiler-explorer-add-library id vid))
-    (compiler-explorer-set-compiler-args args)
-    (compiler-explorer-set-execution-args exe-args)
-    (compiler-explorer-set-input input)
+    (let ((compiler-explorer--inhibit-request t))
+      (compiler-explorer-new-session lang-name compiler)
+      (with-current-buffer (get-buffer compiler-explorer--buffer)
+        (let ((inhibit-modification-hooks t))
+          (erase-buffer)
+          (insert source)
+          (set-buffer-modified-p nil)))
+      (pcase-dolist (`(,id . ,vid) libs)
+        (compiler-explorer-add-library id vid))
+      (compiler-explorer-set-compiler-args args)
+      (compiler-explorer-set-execution-args exe-args)
+      (compiler-explorer-set-input input))
+    (compiler-explorer--request-async)
     (compiler-explorer--define-menu)))
 
 (defvar compiler-explorer--last-session nil)
@@ -1522,10 +1537,7 @@ It must have previously been added with
                   (ring-remove compiler-explorer--session-ring))))
     (setq compiler-explorer--last-session nil)
     (condition-case nil
-        (progn
-          (compiler-explorer--restore-session prev)
-          (compiler-explorer--request-async)
-          t)
+        (prog1 t (compiler-explorer--restore-session prev))
       (error
        (compiler-explorer--cleanup 'skip-save-session)
        (display-warning
@@ -1788,9 +1800,11 @@ compiler."
   (let (success)
     (unwind-protect
         (progn
-          (compiler-explorer-new-session-1 lang
-                                           (if (eq compiler t) nil compiler)
-                                           (eq compiler t))
+          (let ((compiler-explorer--inhibit-request t))
+            (compiler-explorer-new-session-1 lang
+                                             (if (eq compiler t) nil compiler)
+                                             (eq compiler t)))
+          (compiler-explorer--request-async)
           (setq success t))
       (unless success
         (compiler-explorer--cleanup 'skip-save-session)))))
