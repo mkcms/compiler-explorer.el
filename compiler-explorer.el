@@ -296,9 +296,6 @@ entry from function `compiler-explorer--libraries'.")
 (defvar compiler-explorer--execution-input ""
   "Stdin for the program executed.")
 
-(defvar compiler-explorer--recompile-timer nil
-  "Timer for recompilation.")
-
 (defvar compiler-explorer--last-compilation-request nil
   "Last request (response) for current compilation.")
 
@@ -749,18 +746,138 @@ output buffer."
                 map)
       'help-echo "mouse-1: Set program arguments")))
 
-(defun compiler-explorer--after-change (&rest _args)
-  "Schedule recompilation after buffer is modified."
-  (when compiler-explorer--recompile-timer
-    (cancel-timer compiler-explorer--recompile-timer))
-  (setq compiler-explorer--recompile-timer
-        (run-with-timer 0.5 nil #'compiler-explorer--request-async))
+(defvar compiler-explorer-mode-map)
 
-  ;; Prevent 'kill anyway?' when killing the buffer.
-  (restore-buffer-modified-p nil))
+(defun compiler-explorer--define-menu ()
+  "Define a menu in the menu bar for `compiler-explorer' commands."
+  (easy-menu-define compiler-explorer-menu
+    compiler-explorer-mode-map "Compiler Explorer"
+    `("Compiler Explorer"
+      ["Previous session" compiler-explorer-previous-session]
+      ("New session"
+       ,@(mapcar
+          (pcase-lambda ((map :name))
+            (vector name (lambda ()
+                           (interactive)
+                           (compiler-explorer-new-session name t))))
+          (seq-sort-by (lambda (lang) (plist-get lang :name))
+                       #'string<
+                       (compiler-explorer--languages))))
+      ("Load example"
+       ,@(mapcar
+          (lambda (name)
+            (vector name (lambda ()
+                           (interactive)
+                           (compiler-explorer-load-example name))))
+          (mapcar #'car
+                  (compiler-explorer--examples
+                   (plist-get compiler-explorer--language-data :id)))))
+      "--"
+      ("Compiler"
+       ,@(let ((compilers
+                (cl-remove-if
+                 (pcase-lambda ((map :lang))
+                   (not
+                    (string= lang (plist-get
+                                   compiler-explorer--language-data :id))))
+                 (compiler-explorer--compilers)))
+               (by-group (make-hash-table :test #'equal)))
+           (cl-loop for compiler across compilers
+                    for name = (plist-get compiler :name)
+                    for group-name = (plist-get compiler :groupName)
+                    for group = (map-elt by-group group-name)
+                    if group do (nconc group (list name))
+                    else do (setf (map-elt by-group group-name) (list name)))
+
+           (seq-sort-by
+            #'car #'string<
+            (map-apply
+             (lambda (group compilers-in-group)
+               (cl-list*
+                (if (string-empty-p group) "Other compilers" group)
+                (mapcar (lambda (name)
+                          (vector name
+                                  (lambda ()
+                                    (interactive)
+                                    (compiler-explorer-set-compiler name))))
+                        compilers-in-group)))
+             by-group))))
+      ["Set compilation arguments" compiler-explorer-set-compiler-args]
+      ("Add library"
+       :enable (not
+                (seq-empty-p
+                 (compiler-explorer--libraries
+                  (plist-get compiler-explorer--language-data :id))))
+       ,@(mapcar
+          (pcase-lambda ((map :name :id :versions))
+            (cl-list*
+             name
+             :enable `(null (assoc ,id compiler-explorer--selected-libraries))
+             (mapcar
+              (pcase-lambda ((map :version (:id version-id)))
+                (vector
+                 (format "%s %s" name version)
+                 (lambda ()
+                   (interactive)
+                   (compiler-explorer-add-library id version-id))))
+              versions)))
+          (compiler-explorer--libraries
+           (plist-get compiler-explorer--language-data :id))))
+      ("Remove library"
+       :enable (not (null compiler-explorer--selected-libraries))
+       ,@(mapcar
+          (pcase-lambda (`(,library-id ,version-id ,(map :name :versions)))
+            (vector (format "%s %s"
+                            name
+                            (cl-loop for version across versions
+                                     for id = (plist-get version :id)
+                                     when (string= id version-id)
+                                     return (plist-get version :version)))
+                    (lambda ()
+                      (interactive)
+                      (compiler-explorer-remove-library library-id))))
+          compiler-explorer--selected-libraries))
+      "--"
+      ["Set execution arguments" compiler-explorer-set-execution-args]
+      ["Set execution input" compiler-explorer-set-input]
+      "--"
+      ("Output filters"
+       ,@(cl-loop
+          for (key v) on compiler-explorer-output-filters by #'cddr
+          for is-enabled = (compiler-explorer--filter-enabled-p key)
+          with name-alist =
+          (cl-loop for elt in
+                   (cdaddr
+                    (get 'compiler-explorer-output-filters 'custom-type))
+                   collect (cons (car (last elt)) (car (last elt 2))))
+          collect (vector (or (cdr (assoc key name-alist)))
+                          `(lambda ()
+                             (interactive)
+                             (setq compiler-explorer-output-filters
+                                   (plist-put compiler-explorer-output-filters
+                                              ,key (not ,v)))
+                             (compiler-explorer--request-async)
+                             (compiler-explorer--define-menu))
+                          :style 'toggle
+                          :selected v
+                          :enable is-enabled)))
+      ["Source to ASM mappings"
+       (lambda ()
+         (interactive)
+         (setq compiler-explorer-source-to-asm-mappings
+               (not compiler-explorer-source-to-asm-mappings))
+         (compiler-explorer--request-async))
+       :style toggle :selected compiler-explorer-source-to-asm-mappings]
+      ["Next layout" compiler-explorer-layout]
+      ["Copy link to this session" compiler-explorer-make-link]
+      "--"
+      ["Exit" compiler-explorer-exit])))
+
+;; Other internal functions
 
 (defvar compiler-explorer--last-session)
 (defvar compiler-explorer-mode)
+(defvar compiler-explorer--recompile-timer)
 (defvar compiler-explorer--cleaning-up nil)
 
 (defun compiler-explorer--cleanup-1 (&optional skip-save-session)
@@ -1106,6 +1223,19 @@ It must have been created with `compiler-explorer--current-session'."
   "Return non-nil if we're in a `compiler-explorer' session."
   (bufferp (get-buffer compiler-explorer--buffer)))
 
+(defvar compiler-explorer--recompile-timer nil
+  "Timer for recompilation.")
+
+(defun compiler-explorer--after-change (&rest _args)
+  "Schedule recompilation after buffer is modified."
+  (when compiler-explorer--recompile-timer
+    (cancel-timer compiler-explorer--recompile-timer))
+  (setq compiler-explorer--recompile-timer
+        (run-with-timer 0.5 nil #'compiler-explorer--request-async))
+
+  ;; Prevent 'kill anyway?' when killing the buffer.
+  (restore-buffer-modified-p nil))
+
 (defvar compiler-explorer-mode-map (make-sparse-keymap)
   "Keymap used in all compiler explorer buffers.")
 
@@ -1159,131 +1289,6 @@ It must have been created with `compiler-explorer--current-session'."
   :keymap compiler-explorer-mode-map
   (unless compiler-explorer-mode
     (compiler-explorer--cleanup)))
-
-(defun compiler-explorer--define-menu ()
-  "Define a menu in the menu bar for `compiler-explorer' commands."
-  (easy-menu-define compiler-explorer-menu
-    compiler-explorer-mode-map "Compiler Explorer"
-    `("Compiler Explorer"
-      ["Previous session" compiler-explorer-previous-session]
-      ("New session"
-       ,@(mapcar
-          (pcase-lambda ((map :name))
-            (vector name (lambda ()
-                           (interactive)
-                           (compiler-explorer-new-session name t))))
-          (seq-sort-by (lambda (lang) (plist-get lang :name))
-                       #'string<
-                       (compiler-explorer--languages))))
-      ("Load example"
-       ,@(mapcar
-          (lambda (name)
-            (vector name (lambda ()
-                           (interactive)
-                           (compiler-explorer-load-example name))))
-          (mapcar #'car
-                  (compiler-explorer--examples
-                   (plist-get compiler-explorer--language-data :id)))))
-      "--"
-      ("Compiler"
-       ,@(let ((compilers
-                (cl-remove-if
-                 (pcase-lambda ((map :lang))
-                   (not
-                    (string= lang (plist-get
-                                   compiler-explorer--language-data :id))))
-                 (compiler-explorer--compilers)))
-               (by-group (make-hash-table :test #'equal)))
-           (cl-loop for compiler across compilers
-                    for name = (plist-get compiler :name)
-                    for group-name = (plist-get compiler :groupName)
-                    for group = (map-elt by-group group-name)
-                    if group do (nconc group (list name))
-                    else do (setf (map-elt by-group group-name) (list name)))
-
-           (seq-sort-by
-            #'car #'string<
-            (map-apply
-             (lambda (group compilers-in-group)
-               (cl-list*
-                (if (string-empty-p group) "Other compilers" group)
-                (mapcar (lambda (name)
-                          (vector name
-                                  (lambda ()
-                                    (interactive)
-                                    (compiler-explorer-set-compiler name))))
-                        compilers-in-group)))
-             by-group))))
-      ["Set compilation arguments" compiler-explorer-set-compiler-args]
-      ("Add library"
-       :enable (not
-                (seq-empty-p
-                 (compiler-explorer--libraries
-                  (plist-get compiler-explorer--language-data :id))))
-       ,@(mapcar
-          (pcase-lambda ((map :name :id :versions))
-            (cl-list*
-             name
-             :enable `(null (assoc ,id compiler-explorer--selected-libraries))
-             (mapcar
-              (pcase-lambda ((map :version (:id version-id)))
-                (vector
-                 (format "%s %s" name version)
-                 (lambda ()
-                   (interactive)
-                   (compiler-explorer-add-library id version-id))))
-              versions)))
-          (compiler-explorer--libraries
-           (plist-get compiler-explorer--language-data :id))))
-      ("Remove library"
-       :enable (not (null compiler-explorer--selected-libraries))
-       ,@(mapcar
-          (pcase-lambda (`(,library-id ,version-id ,(map :name :versions)))
-            (vector (format "%s %s"
-                            name
-                            (cl-loop for version across versions
-                                     for id = (plist-get version :id)
-                                     when (string= id version-id)
-                                     return (plist-get version :version)))
-                    (lambda ()
-                      (interactive)
-                      (compiler-explorer-remove-library library-id))))
-          compiler-explorer--selected-libraries))
-      "--"
-      ["Set execution arguments" compiler-explorer-set-execution-args]
-      ["Set execution input" compiler-explorer-set-input]
-      "--"
-      ("Output filters"
-       ,@(cl-loop
-          for (key v) on compiler-explorer-output-filters by #'cddr
-          for is-enabled = (compiler-explorer--filter-enabled-p key)
-          with name-alist =
-          (cl-loop for elt in
-                   (cdaddr
-                    (get 'compiler-explorer-output-filters 'custom-type))
-                   collect (cons (car (last elt)) (car (last elt 2))))
-          collect (vector (or (cdr (assoc key name-alist)))
-                          `(lambda ()
-                             (interactive)
-                             (setq compiler-explorer-output-filters
-                                   (plist-put compiler-explorer-output-filters
-                                              ,key (not ,v)))
-                             (compiler-explorer--request-async)
-                             (compiler-explorer--define-menu))
-                          :style 'toggle
-                          :selected v
-                          :enable is-enabled)))
-      ["Source to ASM mappings"
-       (lambda ()
-         (interactive)
-         (setq compiler-explorer-source-to-asm-mappings
-               (not compiler-explorer-source-to-asm-mappings))
-         (compiler-explorer--request-async))
-       :style toggle :selected compiler-explorer-source-to-asm-mappings]
-      ["Next layout" compiler-explorer-layout]
-      ["Copy link to this session" compiler-explorer-make-link]
-      "--"
-      ["Exit" compiler-explorer-exit])))
 
 (defun compiler-explorer-show-output ()
   "Show compiler stdout&stderr buffer."
