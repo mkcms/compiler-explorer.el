@@ -464,7 +464,7 @@ contents are replaced destructively and point is not preserved."
   "Replace contents of buffer TARGET with SOURCE."
   (let ((limit compiler-explorer-replace-insert-nondestructively))
     (with-current-buffer target
-      (let ((buffer-read-only nil))
+      (let ((inhibit-read-only t))
         ;; We need to remove all overlays applied by ansi-color first,
         ;; otherwise sometimes `replace-buffer-contents' will improperly merge
         ;; the existing ANSI-coded regions with the new text.
@@ -513,11 +513,11 @@ contents are replaced destructively and point is not preserved."
                 "\n")
         (insert (format "Compiler exited with code %s" code))
         (compiler-explorer--replace-buffer-contents output (current-buffer)))
-      (let ((buffer-read-only nil))
+      (let ((inhibit-read-only t))
         (ansi-color-apply-on-region (point-min) (point-max)))
 
       (with-demoted-errors "compilation-parse-errors: %s"
-        (let ((buffer-read-only nil))
+        (let ((inhibit-read-only t))
           (compilation-parse-errors (point-min) (point-max))))))
   (force-mode-line-update t))
 
@@ -526,7 +526,7 @@ contents are replaced destructively and point is not preserved."
 This will write the list of supported compilers in the execution
 output buffer."
   (with-current-buffer compiler-explorer--exe-output-buffer
-    (let ((buffer-read-only nil)
+    (let ((inhibit-read-only t)
           (keymap (make-keymap))
           (compiler (plist-get compiler-explorer--compiler-data :name))
           (lang-id (plist-get compiler-explorer--language-data :id)))
@@ -556,7 +556,7 @@ output buffer."
   "Handle execution response contained in RESPONSE."
   (pcase-let (((map :stdout :stderr :code) response))
     (with-current-buffer compiler-explorer--exe-output-buffer
-      (let ((buffer-read-only nil)
+      (let ((inhibit-read-only t)
             (buf (current-buffer)))
         (with-temp-buffer
           (insert "Program stdout:\n")
