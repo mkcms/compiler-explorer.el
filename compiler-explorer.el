@@ -748,8 +748,9 @@ output buffer."
 
 (defvar compiler-explorer--last-session)
 (defvar compiler-explorer-mode)
+(defvar compiler-explorer--cleaning-up nil)
 
-(defun compiler-explorer--cleanup (&optional skip-save-session)
+(defun compiler-explorer--cleanup-1 (&optional skip-save-session)
   "Kill current session.
 If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (if (and
@@ -814,6 +815,13 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
 
   (when compiler-explorer-mode
     (compiler-explorer-mode -1)))
+
+(defun compiler-explorer--cleanup (&optional skip-save-session)
+  "Kill current session.
+If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
+  (unless compiler-explorer--cleaning-up
+    (let ((compiler-explorer--cleaning-up t))
+      (compiler-explorer--cleanup-1 skip-save-session))))
 
 
 ;; Source<->ASM overlays
