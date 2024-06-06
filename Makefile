@@ -11,6 +11,7 @@ INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
 	(unless (package-installed-p `plz)                                    \
 	  (package-refresh-contents)                                          \
 	  (package-install `plz)                                              \
+	  (package-install (cadr (assoc `compat package-archive-contents)))   \
 	  (package-install (cadr (assoc `map package-archive-contents)))      \
 	  (package-install (cadr (assoc `seq package-archive-contents)))      \
 	  (package-install (cadr (assoc `eldoc package-archive-contents)))))'

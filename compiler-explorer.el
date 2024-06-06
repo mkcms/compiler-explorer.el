@@ -6,7 +6,7 @@
 ;; Keywords: c, tools
 ;; Version: 0.5.0
 ;; Homepage: https://github.com/mkcms/compiler-explorer.el
-;; Package-Requires: ((emacs "27.1") (plz "0.9") (eldoc "1.15.0") (map "3.3.1") (seq "2.23"))
+;; Package-Requires: ((emacs "27.1") (compat "29.1.4.5") (plz "0.9") (eldoc "1.15.0") (map "3.3.1") (seq "2.23"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -78,6 +78,7 @@
 (require 'ansi-color)
 (require 'browse-url)
 (require 'color)
+(require 'compat)
 (require 'compile)
 (require 'json)
 (require 'plz)
@@ -148,44 +149,44 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
 (defvar compiler-explorer--languages nil)
 (defun compiler-explorer--languages ()
   "Get all languages."
-  (or compiler-explorer--languages
-      (setq compiler-explorer--languages
-            (compiler-explorer--request-sync
-             "Fetching list of languages"
-             (compiler-explorer--url
-              "languages"
-              `(("fields" . ,(string-join '("id" "name" "extensions" "example"
-                                            "defaultCompiler")
-                                          ","))))))))
+  (compat-call
+   with-memoization compiler-explorer--languages
+   (compiler-explorer--request-sync
+    "Fetching list of languages"
+    (compiler-explorer--url
+     "languages"
+     `(("fields" . ,(string-join '("id" "name" "extensions" "example"
+                                   "defaultCompiler")
+                                 ",")))))))
 
 (defvar compiler-explorer--compilers nil)
 (defun compiler-explorer--compilers ()
   "Get all compilers."
-  (or compiler-explorer--compilers
-      (setq compiler-explorer--compilers
-            (compiler-explorer--request-sync
-             "Fetching list of compilers"
-             (compiler-explorer--url
-              "compilers"
-              `(("fields" . ,(string-join '("id" "lang" "name" "groupName"
-                                            "instructionSet"
-                                            "supportsExecute"
-                                            "supportsBinary"
-                                            "supportsBinaryObject"
-                                            "supportsLibraryCodeFilter"
-                                            "supportsDemangle"
-                                            "supportsIntel"
-                                            "disabledFilters")
-                                          ","))))))))
+  (compat-call
+   with-memoization compiler-explorer--compilers
+   (compiler-explorer--request-sync
+    "Fetching list of compilers"
+    (compiler-explorer--url
+     "compilers"
+     `(("fields" . ,(string-join '("id" "lang" "name" "groupName"
+                                   "instructionSet"
+                                   "supportsExecute"
+                                   "supportsBinary"
+                                   "supportsBinaryObject"
+                                   "supportsLibraryCodeFilter"
+                                   "supportsDemangle"
+                                   "supportsIntel"
+                                   "disabledFilters")
+                                 ",")))))))
 
 (defvar compiler-explorer--libraries (make-hash-table :test #'equal))
 (defun compiler-explorer--libraries (id)
   "Get available libraries for language ID."
-  (or (map-elt compiler-explorer--libraries id)
-      (setf (map-elt compiler-explorer--libraries id)
-            (compiler-explorer--request-sync
-             (format "Fetching %S libraries" id)
-             (compiler-explorer--url "libraries" id)))))
+  (compat-call
+   with-memoization (map-elt compiler-explorer--libraries id)
+   (compiler-explorer--request-sync
+    (format "Fetching %S libraries" id)
+    (compiler-explorer--url "libraries" id))))
 
 (defvar compiler-explorer--asm-opcode-docs-cache
   (make-hash-table :test #'equal)
@@ -231,11 +232,11 @@ sent, but the documentation is not available yet."
 Keys are example names, values are example objects as returned by the API.
 If LANG is non-nil, return only examples for language with that id."
   (let ((examples
-         (or compiler-explorer--examples
-             (setq compiler-explorer--examples
-                   (compiler-explorer--request-sync
-                    (format "Fetching %S examples" (or lang "all"))
-                    (concat compiler-explorer-url "/source/builtin/list"))))))
+         (compat-call
+          with-memoization compiler-explorer--examples
+          (compiler-explorer--request-sync
+           (format "Fetching %S examples" (or lang "all"))
+           (concat compiler-explorer-url "/source/builtin/list")))))
     (remq 'none
           (mapcar
            (lambda (example)
@@ -251,13 +252,12 @@ Values are the example objects from API.")
 (defun compiler-explorer--example (lang file)
   "Get a single example FILE in LANG."
   (let ((key (format "%s:%s" lang file)))
-    (or (map-elt compiler-explorer--cached-example-data key)
-        (setf
-         (map-elt compiler-explorer--cached-example-data key)
-         (compiler-explorer--request-sync
-          (format "Fetching %S example %s" lang file)
-          (concat
-           compiler-explorer-url "/source/builtin/load/" lang "/" file))))))
+    (compat-call
+     with-memoization (map-elt compiler-explorer--cached-example-data key)
+     (compiler-explorer--request-sync
+      (format "Fetching %S example %s" lang file)
+      (concat
+       compiler-explorer-url "/source/builtin/load/" lang "/" file)))))
 
 
 ;; Compilation
@@ -872,6 +872,7 @@ output buffer."
       ["Copy link to this session" compiler-explorer-make-link]
       "--"
       ["Exit" compiler-explorer-exit])))
+
 
 ;; Other internal functions
 
@@ -1115,6 +1116,7 @@ This is eldoc function for compiler explorer."
                   (fill-paragraph)
                   (buffer-string))
                 :thing opcode)))))
+
 
 ;; Session management
 
