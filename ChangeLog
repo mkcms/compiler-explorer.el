@@ -1,3 +1,36 @@
+2024-06-09  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.5.0
+
+	- Implemented colored source line to ASM line mappings with
+	overlays.  This can be toggled by setting the customizable
+	variable `compiler-explorer-source-to-asm-mappings' or via the
+	menu.  New command `compiler-explorer-jump' can be used to jump
+	from source line to corresponding ASM line and vice versa.
+
+	- Fixed output filters which are not supported by current
+	language/compiler being set in the request.
+
+	- List of languages in the menu is now sorted, and compilers are
+	grouped.
+
+	- Fixed an issue where a new session could not be interactively
+	created when the default compiler for a language was invalid.
+
+	- Switched from the old, and apparently no longer actively
+	developed `request' package for HTTP requests to newer and
+	actively developed `plz'.  **Note**: this makes compiler-explorer
+	depend on curl being installed.
+
+	- Added better protection against some external package/function
+	messing buffer-local variables and modes which are required for
+	compiler-explorer.  This was done by converting
+	`compiler-explorer-mode' into a globalized minor mode which in
+	turn enables an internal buffer-local mode that reliably sets up
+	buffer-local variables.
+
+	- Various fixes and smaller improvements.
+
 2024-04-18  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.4.0
