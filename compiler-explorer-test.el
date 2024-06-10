@@ -407,6 +407,35 @@ int main(int argc, char** argv) {
     (should (string= "boost" (caar compiler-explorer--selected-libraries)))
     (should (string= "174" (cadar compiler-explorer--selected-libraries)))))
 
+(ert-deftest compiler-explorer-restoring-from-shortlink ()
+  (let ((url nil)
+        (compiler-explorer-new-session-hook nil))
+    (let ((compiler-explorer--session-ring (make-ring 5))
+          compiler-explorer--last-session)
+      (compiler-explorer-test--with-session "C++" nil
+        (with-current-buffer compiler-explorer--buffer
+          (erase-buffer)
+          (insert "// source _12345_")
+          (compiler-explorer-set-compiler "x86-64 clang (trunk)")
+          (compiler-explorer-set-compiler-args "-Wall -Wextra")
+          (compiler-explorer-set-execution-args "1 2 3")
+          (compiler-explorer-set-input "test")
+          (compiler-explorer-add-library "boost" "174")
+          (setq url (compiler-explorer-make-link)))))
+
+    (compiler-explorer-restore-from-link url)
+
+    (with-current-buffer compiler-explorer--buffer
+      (should (equal (buffer-string) "// source _12345_"))
+      (should (equal (plist-get compiler-explorer--language-data :name) "C++"))
+      (should (equal (plist-get compiler-explorer--compiler-data :name)
+                     "x86-64 clang (trunk)"))
+      (should (equal compiler-explorer--compiler-arguments "-Wall -Wextra"))
+      (should (equal compiler-explorer--execution-arguments "1 2 3"))
+      (should (equal compiler-explorer--execution-input "test"))
+      (should (equal (caar compiler-explorer--selected-libraries) "boost"))
+      (should (equal (cadar compiler-explorer--selected-libraries) "174")))))
+
 (ert-deftest compiler-explorer-mappings ()
   (compiler-explorer-test--with-session "C++" nil
     (with-current-buffer compiler-explorer--buffer
