@@ -6,7 +6,7 @@
 ;; Keywords: c, tools
 ;; Version: 0.5.0
 ;; Homepage: https://github.com/mkcms/compiler-explorer.el
-;; Package-Requires: ((emacs "27.1") (plz "0.8") (eldoc "1.15.0") (map "3.3.1") (seq "2.23"))
+;; Package-Requires: ((emacs "27.1") (plz "0.9") (eldoc "1.15.0") (map "3.3.1") (seq "2.23"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
