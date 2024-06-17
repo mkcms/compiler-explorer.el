@@ -14,7 +14,6 @@ jobs:
       fail-fast: false
       matrix:
         emacs_version:
-          - '26.3'
           - '27.1'
           - '28.2'
           - '29.3'
@@ -29,17 +28,7 @@ jobs:
           version: ${{ matrix.emacs_version }}
 
       - name: Install dependencies
-        run: |
-          ver="${{ matrix.emacs_version }}"
-          if [[ "$ver" != "snapshot" && `echo "$ver < 27" | bc` = 1 ]]; then
-              # On Emacs-26, packages from GNU archive cannot be
-              # verified due to expired key.  This is the simplest workaround.
-              # TODO: Consider `gnu-elpa-keyring-update' package
-              # TODO: Remove this workaround once we upgrade minimum required
-              #       Emacs version (or the signing key gets updated for Emacs-26)
-              export emacs="emacs --eval ""'"'(setq package-unsigned-archives (list "gnu"))'"'"
-          fi
-          make deps
+        run: make deps
 
       - name: Compile
         run: make compile
