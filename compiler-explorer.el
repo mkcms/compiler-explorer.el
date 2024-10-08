@@ -875,10 +875,11 @@ output buffer."
       ["Copy link to this session" compiler-explorer-make-link]
       "--"
       ["Exit" compiler-explorer-exit])))
+
 
 ;; Other internal functions
 
-(defvar compiler-explorer--last-session)
+(defvar compiler-explorer--session-ring)
 (defvar compiler-explorer-mode)
 (defvar compiler-explorer--recompile-timer)
 (defvar compiler-explorer--cleaning-up nil)
@@ -886,23 +887,18 @@ output buffer."
 (defun compiler-explorer--cleanup-1 (&optional skip-save-session)
   "Kill current session.
 If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
-  (if (and
-       (not skip-save-session)
-       (buffer-live-p (get-buffer compiler-explorer--buffer))
-       (stringp (plist-get compiler-explorer--language-data :example))
-       (not (string=
-             (string-trim
-              (plist-get compiler-explorer--language-data :example))
-             (with-current-buffer compiler-explorer--buffer
-               (string-trim (buffer-string))))))
-      ;; Save last session.  Don't insert it into the ring, as that would make
-      ;; us cycle between only 2 sessions when calling
-      ;; `compiler-explorer-previous-session'.
-      ;;
-      ;; Don't save it if it is unmodified from example.
-      (setq compiler-explorer--last-session
-            (compiler-explorer--current-session))
-    (setq compiler-explorer--last-session nil))
+  (when (and
+         (not skip-save-session)
+         (buffer-live-p (get-buffer compiler-explorer--buffer))
+         (stringp (plist-get compiler-explorer--language-data :example))
+         (not (string=
+               (string-trim
+                (plist-get compiler-explorer--language-data :example))
+               (with-current-buffer compiler-explorer--buffer
+                 (string-trim (buffer-string))))))
+    ;; Save last session.  Don't save it if it is unmodified from example.
+    (ring-insert compiler-explorer--session-ring
+                 (compiler-explorer--current-session)))
 
   ;; Abort last request and cancel the timer for recompilation.
   (with-demoted-errors "compiler-explorer--cleanup: %s"
@@ -1118,6 +1114,7 @@ This is eldoc function for compiler explorer."
                   (fill-paragraph)
                   (buffer-string))
                 :thing opcode)))))
+
 
 ;; Session management
 
@@ -1200,14 +1197,11 @@ It must have been created with `compiler-explorer--current-session'."
     (compiler-explorer--request-async)
     (compiler-explorer--define-menu)))
 
-(defvar compiler-explorer--last-session nil)
-
 (defun compiler-explorer--save-sessions ()
   "Save all sessions to a file."
   (let ((current-session
-         (or (and (get-buffer compiler-explorer--buffer)
-                  (compiler-explorer--current-session))
-             compiler-explorer--last-session)))
+         (and (compiler-explorer--active-p)
+              (compiler-explorer--current-session))))
     (when current-session
       (ring-insert compiler-explorer--session-ring current-session))
     (with-temp-file compiler-explorer-sessions-file
@@ -1538,14 +1532,24 @@ It must have previously been added with
 (defun compiler-explorer-previous-session ()
   "Cycle between previous sessions, latest first."
   (interactive)
-  (when (and (ring-empty-p compiler-explorer--session-ring)
-             (null compiler-explorer--last-session))
+  (when (ring-empty-p compiler-explorer--session-ring)
     (error "No previous sessions"))
-  (let ((prev (or compiler-explorer--last-session
-                  (ring-remove compiler-explorer--session-ring))))
-    (setq compiler-explorer--last-session nil)
+  (let ((prev (ring-remove compiler-explorer--session-ring 0))
+        (current (and (compiler-explorer--active-p)
+                      (compiler-explorer--current-session))))
+
     (condition-case nil
-        (prog1 t (compiler-explorer--restore-session prev))
+        (prog1 t
+          (let ((compiler-explorer--session-ring (make-ring 1)))
+            ;; Override the ring to not mess with it.
+            (compiler-explorer--restore-session prev))
+
+          ;; Insert last session into the ring as the *oldest* item.  We have
+          ;; to do this, otherwise we would only be able to cycle between two
+          ;; sessions.
+          (when current
+            (ring-insert-at-beginning
+             compiler-explorer--session-ring current)))
       (error
        (compiler-explorer--cleanup 'skip-save-session)
        (display-warning
@@ -1764,9 +1768,6 @@ LANG, COMPILER, INTERACTIVE."
 
   ;; Clean everything up
   (compiler-explorer--cleanup)
-  (when-let ((session compiler-explorer--last-session))
-    (ring-insert compiler-explorer--session-ring session)
-    (setq compiler-explorer--last-session nil))
 
   ;; Enter session mode
   (compiler-explorer-mode +1)
@@ -1886,8 +1887,7 @@ The hook `compiler-explorer-hook' is always run at the end."
   (let ((buffer (get-buffer compiler-explorer--buffer)))
     (cond
      (buffer (pop-to-buffer buffer) (compiler-explorer--request-async))
-     ((and (or compiler-explorer--last-session
-               (not (ring-empty-p compiler-explorer--session-ring)))
+     ((and (not (ring-empty-p compiler-explorer--session-ring))
            (compiler-explorer-previous-session)))
      (t
       (call-interactively #'compiler-explorer-new-session))))

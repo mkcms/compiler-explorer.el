@@ -410,8 +410,7 @@ int main(int argc, char** argv) {
 (ert-deftest compiler-explorer-restoring-from-shortlink ()
   (let ((url nil)
         (compiler-explorer-new-session-hook nil))
-    (let ((compiler-explorer--session-ring (make-ring 5))
-          compiler-explorer--last-session)
+    (let ((compiler-explorer--session-ring (make-ring 5)))
       (compiler-explorer-test--with-session "C++" nil
         (with-current-buffer compiler-explorer--buffer
           (erase-buffer)
