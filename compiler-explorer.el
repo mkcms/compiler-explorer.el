@@ -62,7 +62,8 @@
 ;; creates a new one, asking for source language.
 ;;
 ;; M-x `compiler-explorer-previous-session' lets you cycle between
-;; previous sessions.
+;; previous sessions.  With a prefix argument, allows selecting the
+;; specific session to restore.
 ;;
 ;; M-x `compiler-explorer-make-link' generates a link for current
 ;; compilation so it can be opened in a browser and shared.
@@ -757,6 +758,14 @@ output buffer."
     compiler-explorer-mode-map "Compiler Explorer"
     `("Compiler Explorer"
       ["Previous session" compiler-explorer-previous-session]
+      ("Restore session"
+       :enable (not (seq-empty-p (compiler-explorer--session-alist)))
+       ,@(mapcar (pcase-lambda (`(,string ,_ ,index))
+                   (vector string
+                           (lambda ()
+                             (interactive)
+                             (compiler-explorer-previous-session index))))
+                 (compiler-explorer--session-alist)))
       ("New session"
        ,@(mapcar
           (pcase-lambda ((map :name))
@@ -1161,6 +1170,27 @@ This is eldoc function for compiler explorer."
     :source ,(with-current-buffer (get-buffer compiler-explorer--buffer)
                (buffer-substring-no-properties (point-min) (point-max)))))
 
+(defun compiler-explorer--stringize-session (session)
+  "Stringify a saved SESSION.
+The return value is a helpful human-readable string that
+describes the session contents."
+  (format "%s: %s" (plist-get session :lang-name)
+          (with-temp-buffer
+            (insert (string-trim (plist-get session :source)))
+            (goto-char (min (point-max) 500))
+            (concat (buffer-substring-no-properties (point-min) (point))
+                    (unless (eobp) "...")))))
+
+(defun compiler-explorer--session-alist ()
+  "Get an alist of the sessions.
+The car of each element will be a human readable string for the
+session.  The cdr will be a cons (SESSION-DATA . INDEX-IN-RING)."
+  (cl-loop
+   with sessions = (ring-elements compiler-explorer--session-ring)
+   for session in sessions
+   for i from 0
+   collect (list (compiler-explorer--stringize-session session) session i)))
+
 (defun compiler-explorer--restore-session (session)
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
@@ -1529,27 +1559,47 @@ It must have previously been added with
   ;; Repopulate list of libraries to remove
   (compiler-explorer--define-menu))
 
-(defun compiler-explorer-previous-session ()
-  "Cycle between previous sessions, latest first."
-  (interactive)
+(defun compiler-explorer-previous-session (&optional nth)
+  "Restore previous session.
+With optional argument NTH (default 0), restore NTH previous
+session.
+
+Interactively, when called with a prefix argument, prompts for a
+session to restore, displaying the session contents and allowing
+to choose one via `completing-read'.
+
+When called without a prefix argument, this will cycle between
+all the previous sessions one by one."
+  (interactive
+   (when current-prefix-arg
+     (let* ((sessions-alist (compiler-explorer--session-alist))
+            (choice
+             (completing-read "Restore session: " sessions-alist nil t)))
+       (cddr (assoc choice sessions-alist)))))
   (when (ring-empty-p compiler-explorer--session-ring)
     (error "No previous sessions"))
-  (let ((prev (ring-remove compiler-explorer--session-ring 0))
+  (unless nth
+    (setq nth 0))
+  (let ((prev (ring-remove compiler-explorer--session-ring nth))
         (current (and (compiler-explorer--active-p)
                       (compiler-explorer--current-session))))
 
     (condition-case nil
         (prog1 t
-          (let ((compiler-explorer--session-ring (make-ring 1)))
-            ;; Override the ring to not mess with it.
-            (compiler-explorer--restore-session prev))
+          (unwind-protect
+              (let ((compiler-explorer--session-ring (make-ring 1)))
+                ;; Override the ring to not mess with it.
+                (compiler-explorer--restore-session prev))
+            ;; Insert last session into the ring as the *oldest* item.  We have
+            ;; to do this, otherwise we would only be able to cycle between two
+            ;; sessions.
+            (when current
+              (ring-insert-at-beginning
+               compiler-explorer--session-ring current))
 
-          ;; Insert last session into the ring as the *oldest* item.  We have
-          ;; to do this, otherwise we would only be able to cycle between two
-          ;; sessions.
-          (when current
-            (ring-insert-at-beginning
-             compiler-explorer--session-ring current)))
+            ;; Redefine the menu with the ring updated (for "Restore session"
+            ;; submenu)
+            (compiler-explorer--define-menu)))
       (error
        (compiler-explorer--cleanup 'skip-save-session)
        (display-warning

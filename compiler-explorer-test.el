@@ -407,6 +407,72 @@ int main(int argc, char** argv) {
     (should (string= "boost" (caar compiler-explorer--selected-libraries)))
     (should (string= "174" (cadar compiler-explorer--selected-libraries)))))
 
+(ert-deftest compiler-explorer-session-ring ()
+  (let ((compiler-explorer--session-ring (make-ring 5))
+        (compiler-explorer-new-session-hook nil))
+    (dotimes (index 5)
+      (compiler-explorer-test--with-session "C++" nil
+        (with-current-buffer compiler-explorer--buffer
+          (erase-buffer)
+          (insert (format "// test %s" index))
+          (kill-buffer (current-buffer)))))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      ;; Session "// test 1" is the 4th (index 3) oldest
+      (compiler-explorer-previous-session 3)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 1") (buffer-string))))
+
+      ;; Session "// test 4" is still the newest
+      (compiler-explorer-previous-session 0)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 4") (buffer-string))))
+
+      ;; Session "// test 3" becomes newest after "// test 4"
+      (compiler-explorer-previous-session 0)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 3") (buffer-string))))
+      (kill-buffer compiler-explorer--buffer))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      ;; Session "// test 4" is the newest
+      (compiler-explorer-previous-session 0)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 4") (buffer-string))))
+      (kill-buffer compiler-explorer--buffer))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      ;; Session "// test 0" is the oldest
+      (compiler-explorer-previous-session 4)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 0") (buffer-string))))
+      (kill-buffer compiler-explorer--buffer))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      ;; Session "// test 3" is the second newest
+      (compiler-explorer-previous-session 1)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 3") (buffer-string))))
+      (kill-buffer compiler-explorer--buffer))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      ;; Cycling through all sessions
+      (dotimes (i 15)
+        (compiler-explorer-previous-session)
+        (with-current-buffer compiler-explorer--buffer
+          (should (string= (format "// test %s" (- 4 (mod i 5)))
+                           (buffer-string))))))))
+
 (ert-deftest compiler-explorer-restoring-from-shortlink ()
   (let ((url nil)
         (compiler-explorer-new-session-hook nil))

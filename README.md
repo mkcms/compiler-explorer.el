@@ -32,7 +32,8 @@ and loads it.
 one, asking for source language.
 
 `M-x compiler-explorer-previous-session` lets you cycle between previous
-sessions.
+sessions.  With a prefix argument, allows selecting the specific session to
+restore.
 
 `M-x compiler-explorer-make-link` generates a link for current compilation so
 it can be opened in a browser and shared.
