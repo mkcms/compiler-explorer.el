@@ -1268,6 +1268,7 @@ It must have been created with `compiler-explorer--current-session'."
 
 (define-minor-mode compiler-explorer--local-mode
   "Minor mode used in all compiler explorer buffers."
+  :interactive nil
   :lighter ""
   (add-hook 'kill-buffer-hook #'compiler-explorer--cleanup nil t)
   (add-hook 'project-find-functions
