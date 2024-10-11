@@ -473,6 +473,74 @@ int main(int argc, char** argv) {
           (should (string= (format "// test %s" (- 4 (mod i 5)))
                            (buffer-string))))))))
 
+(ert-deftest compiler-explorer-discard-session ()
+  (let ((compiler-explorer--session-ring (make-ring 5))
+        (compiler-explorer-new-session-hook nil))
+    (dotimes (index 5)
+      (compiler-explorer-test--with-session "C++" nil
+        (with-current-buffer compiler-explorer--buffer
+          (erase-buffer)
+          (insert (format "// test %s" index))
+          (kill-buffer (current-buffer)))))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      (compiler-explorer-discard-session '(0 4))
+
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 3") (buffer-string))))
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 2") (buffer-string))))
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 1") (buffer-string)))))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      (compiler-explorer-discard-session '(1 2 4))
+
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 4") (buffer-string))))
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 1") (buffer-string)))))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      (compiler-explorer-discard-session '(0))
+      (compiler-explorer-discard-session '(0))
+      (compiler-explorer-discard-session '(2))
+
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 2") (buffer-string))))
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 1") (buffer-string)))))
+
+    (let ((compiler-explorer--session-ring
+           (ring-copy compiler-explorer--session-ring)))
+
+      (compiler-explorer-previous-session)
+      (compiler-explorer-discard-session)
+      (compiler-explorer-exit)
+
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 3") (buffer-string))))
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 2") (buffer-string))))
+      (compiler-explorer-previous-session)
+      (with-current-buffer compiler-explorer--buffer
+        (should (string= (format "// test 1") (buffer-string)))))))
+
 (ert-deftest compiler-explorer-restoring-from-shortlink ()
   (let ((url nil)
         (compiler-explorer-new-session-hook nil))

@@ -61,9 +61,11 @@
 ;; M-x `compiler-explorer-new-session' kills the current session and
 ;; creates a new one, asking for source language.
 ;;
-;; M-x `compiler-explorer-previous-session' lets you cycle between
-;; previous sessions.  With a prefix argument, allows selecting the
-;; specific session to restore.
+;; M-x `compiler-explorer-previous-session' lets you restore previous
+;;sessions.
+;;
+;; M-x `compiler-explorer-discard-session' kills the current or selected
+;; sessions and forgets about them forever.
 ;;
 ;; M-x `compiler-explorer-make-link' generates a link for current
 ;; compilation so it can be opened in a browser and shared.
@@ -1606,6 +1608,68 @@ all the previous sessions one by one."
        (display-warning
         'compiler-explorer "Previous session appears to be corrupt" :warning)
        nil))))
+
+(defun compiler-explorer-discard-session (&optional indices interactive)
+  "Kill the current session and forget about it.
+If INDICES is non-nil, it should be a list of ring indices.  If
+provided, the sessions at these indices will be removed from the
+ring (0 = newest).  If INDICES contains nil, then the current
+session is killed and not saved to the ring.
+
+If INTERACTIVE, prompt for confirmation.
+
+Interactively, discard the current session.  With a prefix
+argument, prompt for sessions to discard."
+  (interactive
+   (cond
+    ((and (not (compiler-explorer--active-p))
+          (ring-empty-p compiler-explorer--session-ring))
+     (user-error "No sessions"))
+    ((and (compiler-explorer--active-p)
+          (not current-prefix-arg))
+     (list nil t))
+    (t (let* ((sessions-alist (compiler-explorer--session-alist))
+              (choices
+               (cl-loop
+                with sessions = (append (list '(""))
+                                        (and (compiler-explorer--active-p)
+                                             (list '("*current*")))
+                                        (compiler-explorer--session-alist))
+                while (cdr sessions)
+                for choice =
+                (completing-read "Discard sessions (RET to finish): "
+                                 sessions nil t nil nil "")
+                until (string= choice "")
+                collect choice
+                do (setq sessions
+                         (delq (assoc choice sessions)
+                               sessions)))))
+         (unless choices
+           (user-error "No sessions selected"))
+         (list
+          (mapcar (lambda (choice) (caddr (assoc choice sessions-alist)))
+                  choices)
+          t)))))
+  (let ((current (or (null indices) (memq nil indices))))
+    (when (and current (not (compiler-explorer--active-p)))
+      (error "Not in a `compiler-explorer' session"))
+    (if (and interactive (not (yes-or-no-p
+                               (if (or (null indices) (equal indices '(nil)))
+                                   "Discard this session? "
+                                 (format
+                                  "Discard %s session%s? "
+                                  (length indices)
+                                  (if (cdr indices) "s" ""))))))
+        (user-error "Aborted")
+      (setq indices (sort (delq nil indices) #'>))
+
+      (mapc (apply-partially #'ring-remove compiler-explorer--session-ring)
+            indices)
+
+      (when current
+        (compiler-explorer--cleanup 'skip-save-session)
+        (unless (ring-empty-p compiler-explorer--session-ring)
+          (compiler-explorer-previous-session))))))
 
 (defvar compiler-explorer-layouts
   '((source . asm)
