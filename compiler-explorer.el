@@ -997,6 +997,10 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
        :extend t))
   "One of the faces used for coloring code&ASM regions.")
 
+(defface compiler-explorer-cursor-entered
+  `((t :weight bold))
+  "Face used for overlays containing the point.")
+
 (defcustom compiler-explorer-source-to-asm-mappings t
   "If non-nil, decorate the source and ASM buffers.
 The added overlays show which portion of source code maps to ASM
@@ -1004,6 +1008,17 @@ instructions.  Calling `compiler-explorer-jump' when point is
 inside one of these colored blocks jumps to and highlights the
 corresponding overlay in the other buffer."
   :type 'boolean)
+
+(defun compiler-explorer--cursor-entered (overlays face)
+  "Temporarily highlight all entered OVERLAYS using FACE as base face."
+  (dolist (ov overlays)
+    (overlay-put ov 'face
+                 `(:inherit (compiler-explorer-cursor-entered ,face)))))
+
+(defun compiler-explorer--cursor-left (overlays face)
+  "Unhighlight OVERLAYS that were left, restoring FACE as their face."
+  (dolist (ov overlays)
+    (overlay-put ov 'face face)))
 
 (defun compiler-explorer--build-overlays (regions)
   "Add source<->ASM mapping overlays in REGIONS.
@@ -1018,12 +1033,29 @@ line."
 
   (setq regions (sort regions #'car-less-than-car))
 
-  (let ((faces (list 'compiler-explorer-1 'compiler-explorer-2
-                     'compiler-explorer-3 'compiler-explorer-4
-                     'compiler-explorer-5))
-        face
-        source-overlay asm-overlays
-        prev-ov)
+  (let* ((faces (list 'compiler-explorer-1 'compiler-explorer-2
+                      'compiler-explorer-3 'compiler-explorer-4
+                      'compiler-explorer-5))
+         face
+         source-overlay asm-overlays
+         prev-ov
+         (make-cursor-sensor-functions
+          (lambda (ov face)
+            (list
+             (lambda (_window _pos kind)
+               (let* ((siblings
+                       (overlay-get ov 'compiler-explorer--overlay-group))
+                      (target (overlay-get
+                               (overlay-get ov 'compiler-explorer--target)
+                               'compiler-explorer--overlay-group))
+                      (ovs (cl-delete-duplicates
+                            (remq nil
+                                  (append siblings target)))))
+                 (pcase kind
+                   ('entered
+                    (compiler-explorer--cursor-entered ovs face))
+                   ('left
+                    (compiler-explorer--cursor-left ovs face)))))))))
     (pcase-dolist (`(,line-num . ,points-in-asm) regions)
       (setq face (car faces))
       (setq faces (append (cdr faces) (list face)))
@@ -1039,9 +1071,12 @@ line."
                                     (line-beginning-position 2))))
               (overlay-put ov 'compiler-explorer--overlay t)
               (overlay-put ov 'compiler-explorer--overlay-group (list ov))
+              (overlay-put ov 'cursor-sensor-functions
+                           (funcall make-cursor-sensor-functions ov face))
               (overlay-put ov 'face face)
               (overlay-put ov 'priority -100)
-              (setq source-overlay ov)))))
+              (setq source-overlay ov))))
+        (cursor-sensor-mode +1))
 
       (with-current-buffer compiler-explorer--compiler-buffer
         (dolist (pt points-in-asm)
@@ -1062,10 +1097,13 @@ line."
                                     (line-beginning-position 2))))
               (overlay-put ov 'compiler-explorer--overlay t)
               (overlay-put ov 'compiler-explorer--target source-overlay)
+              (overlay-put ov 'cursor-sensor-functions
+                           (funcall make-cursor-sensor-functions ov face))
               (overlay-put ov 'face face)
               (overlay-put ov 'priority -100)
 
-              (push ov asm-overlays))))))
+              (push ov asm-overlays)))))
+        (cursor-sensor-mode +1))
 
       (setq asm-overlays (seq-sort-by #'overlay-start #'< asm-overlays))
       (dolist (ov asm-overlays)
