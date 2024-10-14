@@ -972,30 +972,14 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
     (unless (string= bg "unspecified-bg")
       (color-darken-name bg percent))))
 
-(defface compiler-explorer-1
-  `((t :background ,(compiler-explorer--overlay-bg-base 46)
-       :extend t))
-  "One of the faces used for coloring code&ASM regions.")
-
-(defface compiler-explorer-2
-  `((t :background ,(compiler-explorer--overlay-bg-base 28)
-       :extend t))
-  "One of the faces used for coloring code&ASM regions.")
-
-(defface compiler-explorer-3
-  `((t :background ,(compiler-explorer--overlay-bg-base 17)
-       :extend t))
-  "One of the faces used for coloring code&ASM regions.")
-
-(defface compiler-explorer-4
-  `((t :background ,(compiler-explorer--overlay-bg-base 10)
-       :extend t))
-  "One of the faces used for coloring code&ASM regions.")
-
-(defface compiler-explorer-5
-  `((t :background ,(compiler-explorer--overlay-bg-base 6)
-       :extend t))
-  "One of the faces used for coloring code&ASM regions.")
+(defcustom compiler-explorer-overlays '(46 28 17 10 6)
+  "List of faces or specs used for ASM<->source mappings.
+Each element can either be a face or a number.  If it's a face,
+it is used as one of the faces for overlays.  If it's a number, a
+face is synthesized for the overlay, with the background color
+being the background color of the default face, darkened by this
+many percent."
+  :type '(repeat (choice face (integer :tag "Darken percentage"))))
 
 (defface compiler-explorer-cursor-entered
   `((t :weight bold))
@@ -1033,9 +1017,7 @@ line."
 
   (setq regions (sort regions #'car-less-than-car))
 
-  (let* ((faces (list 'compiler-explorer-1 'compiler-explorer-2
-                      'compiler-explorer-3 'compiler-explorer-4
-                      'compiler-explorer-5))
+  (let* ((faces (or compiler-explorer-overlays '(default)))
          face
          source-overlay asm-overlays
          prev-ov
@@ -1058,6 +1040,9 @@ line."
                     (compiler-explorer--cursor-left ovs face)))))))))
     (pcase-dolist (`(,line-num . ,points-in-asm) regions)
       (setq face (car faces))
+      (when (integerp face)
+        (setq face `(:background ,(compiler-explorer--overlay-bg-base face)
+                                 :extend t)))
       (setq faces (append (cdr faces) (list face)))
       (setq asm-overlays nil source-overlay nil)
 
