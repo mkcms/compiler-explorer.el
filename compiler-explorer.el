@@ -1396,8 +1396,7 @@ the same source line."
                                      (= index-of-this-ov (1- (length group)))))
                             ;; Jump to the other buffer, e.g. source from ASM
                             (overlay-get ov 'compiler-explorer--target)
-                          (nth requested-within-group group)))
-             (buf (overlay-buffer target-ov)))
+                          (nth requested-within-group group))))
         (setq group (overlay-get target-ov 'compiler-explorer--overlay-group))
 
         (when (null which)
@@ -1407,10 +1406,14 @@ the same source line."
                                       (abs (- (overlay-start ov) (point)))))
                                   #'< group))))
 
-        (pop-to-buffer buf)
-        (with-current-buffer buf
-          (pulse-momentary-highlight-overlay target-ov)
-          (goto-char (overlay-start target-ov)))
+        (pop-to-buffer (overlay-buffer target-ov))
+        (goto-char (overlay-start target-ov))
+
+        ;; Pulse it later, as `cursor-sensor-functions' might trigger right
+        ;; after we quit this function (due to point movement), and they might
+        ;; change the overlay's face.
+        (run-with-timer 0.0 nil #'pulse-momentary-highlight-overlay target-ov)
+
         (message "%s block %d/%d"
                  (if (eq (current-buffer)
                          (get-buffer compiler-explorer--buffer))
