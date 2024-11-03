@@ -120,7 +120,7 @@ The last element can be an alist of (FIELD . VALUE) entries.
 This alist will be encoded and appended to the URL as
 URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
   (let (params)
-    (when-let ((last (car (last chunks)))
+    (when-let* ((last (car (last chunks)))
                (is-alist (listp last)))
       (setq params last chunks (butlast chunks)))
     (concat
@@ -391,7 +391,7 @@ when multiple functions try to do it in a block of code.")
              '((t
                 compiler-explorer--last-exe-request
                 compiler-explorer--handle-execution-response)))))
-    (when-let ((last (symbol-value symbol)))
+    (when-let* ((last (symbol-value symbol)))
       ;; Abort last request
       (when (process-live-p last)
         (delete-process last)))
@@ -913,10 +913,10 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
 
   ;; Abort last request and cancel the timer for recompilation.
   (with-demoted-errors "compiler-explorer--cleanup: %s"
-    (when-let ((req compiler-explorer--last-compilation-request))
+    (when-let* ((req compiler-explorer--last-compilation-request))
       (when (process-live-p req)
         (delete-process req)))
-    (when-let ((req compiler-explorer--last-exe-request))
+    (when-let* ((req compiler-explorer--last-exe-request))
       (when (process-live-p req)
         (delete-process req)))
     (when compiler-explorer--recompile-timer
@@ -968,7 +968,7 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
 
 (defun compiler-explorer--overlay-bg-base (percent)
   "Get the color for overlay background, PERCENT darker from default."
-  (when-let ((bg (face-background 'default nil t)))
+  (when-let* ((bg (face-background 'default nil t)))
     (unless (string= bg "unspecified-bg")
       (color-darken-name bg percent))))
 
@@ -1136,7 +1136,7 @@ the minibuffer and separate help buffers."
 (defun compiler-explorer--compilation-eldoc-documentation-function (callback)
   "Call CALLBACK with the documentation for opcode at point.
 This is eldoc function for compiler explorer."
-  (when-let ((opcode (thing-at-point 'symbol)))
+  (when-let* ((opcode (thing-at-point 'symbol)))
     (compiler-explorer--asm-opcode-doc
      (plist-get compiler-explorer--compiler-data :instructionSet)
      opcode
@@ -1381,9 +1381,9 @@ the same source line."
   (interactive "P")
   (unless (compiler-explorer--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (if-let ((ov (cl-find-if
-                (lambda (ov) (overlay-get ov 'compiler-explorer--overlay))
-                (overlays-at (point)))))
+  (if-let* ((ov (cl-find-if
+                 (lambda (ov) (overlay-get ov 'compiler-explorer--overlay))
+                 (overlays-at (point)))))
       (let* ((group (overlay-get ov 'compiler-explorer--overlay-group))
              (index-of-this-ov (cl-position ov group))
              (requested-within-group
@@ -1902,9 +1902,9 @@ The source buffer is current when this hook runs.")
   "Start new session for LANG (name or id).
 This is a subr of `compiler-explorer-new-session' that uses given
 LANG, COMPILER, INTERACTIVE."
-  (when-let ((ent (cl-find lang (compiler-explorer--languages)
-                           :key (lambda (l) (plist-get l :id))
-                           :test #'string=)))
+  (when-let* ((ent (cl-find lang (compiler-explorer--languages)
+                            :key (lambda (l) (plist-get l :id))
+                            :test #'string=)))
     (setq lang (plist-get ent :name)))
 
   ;; Clean everything up
