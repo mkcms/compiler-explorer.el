@@ -895,19 +895,23 @@ output buffer."
 (defvar compiler-explorer--recompile-timer)
 (defvar compiler-explorer--cleaning-up nil)
 
+(defun compiler-explorer--session-savable-p ()
+  "Return non-nil if the current session should be saved.
+A session that has no source code or is the same as an
+example/default is not saved."
+  (and (compiler-explorer--active-p)
+       (let ((example
+              (or (plist-get compiler-explorer--language-data :example) ""))
+             (string (with-current-buffer compiler-explorer--buffer
+                       (string-trim (buffer-string)))))
+         (not (or (string-empty-p string)
+                  (string= string (string-trim example)))))))
+
 (defun compiler-explorer--cleanup-1 (&optional skip-save-session)
   "Kill current session.
 If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
-  (when (and
-         (not skip-save-session)
-         (buffer-live-p (get-buffer compiler-explorer--buffer))
-         (stringp (plist-get compiler-explorer--language-data :example))
-         (not (string=
-               (string-trim
-                (plist-get compiler-explorer--language-data :example))
-               (with-current-buffer compiler-explorer--buffer
-                 (string-trim (buffer-string))))))
-    ;; Save last session.  Don't save it if it is unmodified from example.
+  (when (and (not skip-save-session)
+             (compiler-explorer--session-savable-p))
     (ring-insert compiler-explorer--session-ring
                  (compiler-explorer--current-session)))
 
@@ -1610,7 +1614,7 @@ all the previous sessions one by one."
   (unless nth
     (setq nth 0))
   (let ((prev (ring-remove compiler-explorer--session-ring nth))
-        (current (and (compiler-explorer--active-p)
+        (current (and (compiler-explorer--session-savable-p)
                       (compiler-explorer--current-session))))
 
     (condition-case nil
