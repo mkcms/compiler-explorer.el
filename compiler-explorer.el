@@ -587,6 +587,8 @@ output buffer."
 
 ;; UI
 
+(defvar compiler-explorer--recompile-timer)
+
 (defun compiler-explorer--header-line-format-common ()
   "Get the mode line template used in compiler explorer mode."
   (let* ((is-exe (eq (current-buffer)
@@ -603,7 +605,9 @@ output buffer."
                                    :supportsExecute)))
                (propertize "ERROR" 'face 'error))
               ((null resp) "")
-              ((process-live-p resp) "Wait...")
+              ((or (process-live-p resp)
+                   (member compiler-explorer--recompile-timer timer-list))
+               "Wait...")
               ((/= 0 (process-exit-status resp))
                (propertize "ERROR" 'face 'error
                            'help-echo (format
@@ -1290,7 +1294,10 @@ It must have been created with `compiler-explorer--current-session'."
         (run-with-timer 0.5 nil #'compiler-explorer--request-async))
 
   ;; Prevent 'kill anyway?' when killing the buffer.
-  (restore-buffer-modified-p nil))
+  (restore-buffer-modified-p nil)
+
+  ;; Set the header line status to "Wait..."
+  (force-mode-line-update t))
 
 (defvar compiler-explorer-mode-map (make-sparse-keymap)
   "Keymap used in all compiler explorer buffers.")
