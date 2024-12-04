@@ -38,7 +38,7 @@
 ;; executed program.
 ;;
 ;; M-x `compiler-explorer-set-compiler' changes the compiler for current
-;;session.
+;; session.
 ;;
 ;; M-x `compiler-explorer-set-compiler-args' sets compilation options.
 ;;
@@ -62,7 +62,7 @@
 ;; creates a new one, asking for source language.
 ;;
 ;; M-x `compiler-explorer-previous-session' lets you restore previous
-;;sessions.
+;; sessions.
 ;;
 ;; M-x `compiler-explorer-discard-session' kills the current or selected
 ;; sessions and forgets about them forever.

@@ -19,8 +19,12 @@ INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                        \
 FILL_COMMENTARY := --eval '(progn                                             \
 	(delete-trailing-whitespace)                                          \
 	(setq fill-column 74)                                                 \
-	(fill-individual-paragraphs (search-forward "Commentary:")            \
-	                            (search-forward "Code:"))                 \
+	(narrow-to-region (search-forward "Commentary:")                      \
+                          (search-forward "Code:"))                           \
+        (goto-char (point-min))                                               \
+	(while (re-search-forward "^;; *." nil t)                             \
+	  (fill-paragraph)                                                    \
+          (end-of-line))                                                      \
 	(save-buffer))'
 
 KEYMAP := --eval '(dolist (elt                                                \
