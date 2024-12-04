@@ -148,7 +148,10 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
   "Perform sync `plz' request for URL, displaying WHAT with progress reporter."
   (let ((pr (make-progress-reporter what)))
     (unwind-protect
-        (apply #'plz method url :headers headers :as as args)
+        (apply #'plz method url
+               :headers headers
+               :as as
+               (map-delete args :method))
       (progress-reporter-done pr))))
 
 (defvar compiler-explorer--languages nil)
@@ -1854,13 +1857,13 @@ With an optional prefix argument OPEN, open that link in a browser."
                            :stdin ,compiler-explorer--execution-input)
                           ])]))
          (response
-          (plz 'post
-            (concat compiler-explorer-url "/shortener")
-            :headers '(("Accept" . "application/json")
-                       ("Content-Type" . "application/json"))
-            :body (let ((json-object-type 'plist))
-                    (json-encode state))
-            :as #'compiler-explorer--parse-json))
+          (compiler-explorer--request-sync
+           "Generating shortlink" (compiler-explorer--url "shortener")
+           :method 'post
+           :headers '(("Accept" . "application/json")
+                      ("Content-Type" . "application/json"))
+           :body (let ((json-object-type 'plist))
+                   (json-encode state))))
          (url (plist-get response :url)))
     (message (kill-new url))
     (prog1 url (when open (browse-url-xdg-open url)))))
