@@ -1,3 +1,9 @@
+2024-12-22  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.6.1
+
+	- Fixed shortlink generation after URL change in the API.
+
 2024-11-29  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.6.0
