@@ -454,12 +454,8 @@ This calls `compiler-explorer--handle-compilation-response' and
 
 (defvar compiler-explorer--project-dir)
 
-;; TODO: This variable is present only because in Emacs-26
-;; `replace-buffer-contents' does not take optional arguments that allow
-;; controlling performance.
-;;
-;; It should be removed when we set minimum required version to Emacs-27 or
-;; later.
+;; TODO: Instead, we can allow the user to provide the user the option to
+;; provide MAX-SECS and MAX-COSTS arguments to `replace-region-contents'.
 (defcustom compiler-explorer-replace-insert-nondestructively 25000
   "Replace buffer contents nondestructively if it's size is less than this.
 
@@ -468,7 +464,7 @@ inserted into a temporary buffer; if the size of this temporary
 buffer is less than this, and if the size of the current
 disassembly buffer is less than this value, the contents of the
 current disassembly buffer are replaced with the contents of the
-temporary buffer with `replace-buffer-contents'.  This is slow
+temporary buffer with `replace-region-contents'.  This is slow
 for large buffers, but has the advantage of properly preserving
 point.
 
@@ -482,14 +478,15 @@ contents are replaced destructively and point is not preserved."
     (with-current-buffer target
       (let ((inhibit-read-only t))
         ;; We need to remove all overlays applied by ansi-color first,
-        ;; otherwise sometimes `replace-buffer-contents' will improperly merge
+        ;; otherwise sometimes `replace-region-contents' will improperly merge
         ;; the existing ANSI-coded regions with the new text.
         (delete-all-overlays)
         (set-text-properties (point-min) (point-max) nil)
 
         (if (and (< (buffer-size target) limit)
                  (< (buffer-size source) limit))
-            (replace-buffer-contents source)
+            (replace-region-contents (point-min) (point-max)
+                                     (lambda () source))
           (erase-buffer)
           (insert-buffer-substring source))))))
 
