@@ -185,7 +185,7 @@
 
 (ert-deftest compiler-explorer-switching-compilers ()
   "Check that switching compilers works and triggers recompilation."
-  (compiler-explorer-test--with-session "C++" "x86-64 gcc (trunk)"
+  (compiler-explorer-test--with-session "C++" "x86-64 gcc 15.1"
     (compiler-explorer-test--insert "
 #ifdef __clang__
 int foo(int) { return 1; }
