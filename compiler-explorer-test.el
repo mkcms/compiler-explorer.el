@@ -29,7 +29,8 @@
 
 (defmacro compiler-explorer-test--with-session (lang compiler &rest body)
   (declare (indent 2) (debug (sexp sexp body)))
-  `(let ((compiler-explorer-new-session-hook '()))
+  `(let ((compiler-explorer-new-session-hook '())
+         (compiler-explorer-response-limit-bytes 1000000000))
      (unwind-protect
          (progn
            (compiler-explorer-new-session ,lang ,compiler)
@@ -114,6 +115,18 @@
       (let ((first (aref versions 0)))
         (should (stringp (plist-get first :id)))
         (should (stringp (plist-get first :version)))))))
+
+(ert-deftest compiler-explorer-api-tools ()
+  (let* ((cpp (seq-find (lambda (x) (string= (plist-get x :name) "C++"))
+                        (compiler-explorer--languages)))
+         (tools (compiler-explorer--tools (plist-get cpp :id))))
+    (should tools)
+    (let* ((clangtidy (map-elt tools "clangtidytrunk")))
+      (should clangtidy)
+      (should (plist-get clangtidy :id))
+      (should (plist-get clangtidy :type))
+      (should (plist-get clangtidy :languageId))
+      (should (plist-get clangtidy :allowStdin)))))
 
 (ert-deftest compiler-explorer-api-asm-opcode-docs ()
   (with-temp-buffer
@@ -286,6 +299,49 @@ int foo(boost::any a) { return 1; }")
     (should (string-match-p "Compilation failed"
                             (compiler-explorer-test--compilation-result)))))
 
+(ert-deftest compiler-explorer-tools ()
+  (compiler-explorer-test--with-session "C++" nil
+    (compiler-explorer-test--insert "#include <map>
+#include <string>
+
+int foo(  std::string   a) {     return    1   ; }")
+
+    (compiler-explorer-add-tool "clangformattrunk")
+    (compiler-explorer-add-tool "iwyu")
+    (compiler-explorer-add-tool "clangtidytrunk")
+    (compiler-explorer-add-tool "clangquerytrunk")
+    (compiler-explorer-set-tool-args "clangtidytrunk" "--help")
+    (compiler-explorer-set-tool-input "clangquerytrunk"
+                                      "m functionDecl().bind(\"x\")")
+
+    (compiler-explorer-test--wait)
+    (with-current-buffer
+        (format compiler-explorer--tool-buffer-format "clangformattrunk")
+      (should (string= "#include <map>
+#include <string>
+
+int foo(std::string a) { return 1; }
+"
+                       (buffer-string))))
+    (with-current-buffer
+        (format compiler-explorer--tool-buffer-format "iwyu")
+      (goto-char (point-min))
+      (should
+       (search-forward "should remove these lines:\n- #include <map> "))
+      (should
+       (search-forward "The full include-list for <source>:
+#include <string>  // for string\n---\n")))
+    (with-current-buffer
+        (format compiler-explorer--tool-buffer-format "clangtidytrunk")
+      (goto-char (point-min))
+      (should
+       (search-forward "USAGE: clang-tidy [options]")))
+    (with-current-buffer
+        (format compiler-explorer--tool-buffer-format "clangquerytrunk")
+      (goto-char (point-min))
+      (should (search-forward "Match #4:"))
+      (should (re-search-forward "note:.* binds here")))))
+
 (ert-deftest compiler-explorer-creates-temp-project ()
   (let ((compiler-explorer-make-temp-file t)
         dir)
@@ -377,6 +433,7 @@ int main(int argc, char** argv) {
       (compiler-explorer-set-execution-args "1 2 3")
       (compiler-explorer-set-input "test")
       (compiler-explorer-add-library "boost" "174")
+      (compiler-explorer-add-tool "clangtidytrunk")
       (erase-buffer)
       (insert "int foo();")
       (kill-buffer (current-buffer)))
@@ -387,6 +444,8 @@ int main(int argc, char** argv) {
                  (get-buffer compiler-explorer--output-buffer)))
     (should-not (buffer-live-p
                  (get-buffer compiler-explorer--exe-output-buffer)))
+    (should-not (buffer-live-p
+                 (get-buffer "*compiler-explorer tool clangtidytrunk*")))
     (should-not compiler-explorer--language-data)
     (should-not compiler-explorer--compiler-data)
     (should-not compiler-explorer--selected-libraries)
@@ -405,7 +464,9 @@ int main(int argc, char** argv) {
     (should (string= compiler-explorer--execution-arguments "1 2 3"))
     (should (string= compiler-explorer--execution-input "test"))
     (should (string= "boost" (caar compiler-explorer--selected-libraries)))
-    (should (string= "174" (cadar compiler-explorer--selected-libraries)))))
+    (should (string= "174" (cadar compiler-explorer--selected-libraries)))
+    (should (buffer-live-p
+             (get-buffer "*compiler-explorer tool clangtidytrunk*")))))
 
 (ert-deftest compiler-explorer-session-ring ()
   (let ((compiler-explorer--session-ring (make-ring 5))
@@ -554,6 +615,8 @@ int main(int argc, char** argv) {
           (compiler-explorer-set-execution-args "1 2 3")
           (compiler-explorer-set-input "test")
           (compiler-explorer-add-library "boost" "174")
+          (compiler-explorer-add-tool "clangtidytrunk")
+          (compiler-explorer-set-tool-args "clangtidytrunk" "--help")
           (setq url (compiler-explorer-make-link)))))
 
     (compiler-explorer-restore-from-link url)
@@ -567,7 +630,10 @@ int main(int argc, char** argv) {
       (should (equal compiler-explorer--execution-arguments "1 2 3"))
       (should (equal compiler-explorer--execution-input "test"))
       (should (equal (caar compiler-explorer--selected-libraries) "boost"))
-      (should (equal (cadar compiler-explorer--selected-libraries) "174")))))
+      (should (equal (cadar compiler-explorer--selected-libraries) "174"))
+      (should (equal (caar compiler-explorer--selected-tools) "clangtidytrunk"))
+      (should (equal (caddar compiler-explorer--selected-tools) "--help"))
+      (should (bufferp (cadar compiler-explorer--selected-tools))))))
 
 (ert-deftest compiler-explorer-mappings ()
   (compiler-explorer-test--with-session "C++" nil

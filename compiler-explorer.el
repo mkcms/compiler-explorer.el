@@ -55,6 +55,19 @@
 ;; M-x `compiler-explorer-jump' jumps to ASM block for the source line at
 ;; point and vice versa.
 ;;
+;; M-x `compiler-explorer-add-tool' asks for the name of a tool, adds it
+;; to current compilation and displays a new buffer showing the tool's
+;; output.
+;;
+;; M-x `compiler-explorer-remove-tool' prompts for the name of an added
+;; tool to remove.
+;;
+;; M-x `compiler-explorer-set-tool-args' sets the arguments for an added
+;; tool.
+;;
+;; M-x `compiler-explorer-set-tool-input' reads a string from minibuffer
+;; that will be used as input for an added tool.
+;;
 ;; M-x `compiler-explorer-load-example' prompts for a name of a builtin
 ;; example and loads it.
 ;;
@@ -268,6 +281,18 @@ Values are the example objects from API.")
           (concat
            compiler-explorer-url "/source/builtin/load/" lang "/" file))))))
 
+(defvar compiler-explorer--tools nil)
+(defun compiler-explorer--tools (lang)
+  "Get a list of tools for given LANG."
+  (if (assoc lang compiler-explorer--tools)
+      (map-elt compiler-explorer--tools lang)
+    (setf
+     (map-elt compiler-explorer--tools lang)
+     (seq-map (lambda (elt) (cons (plist-get elt :id) elt))
+              (compiler-explorer--request-sync
+               (format "Fetching %S tools" (or lang "all"))
+               (compiler-explorer--url "tools" lang))))))
+
 
 ;; Compilation
 
@@ -284,6 +309,9 @@ Values are the example objects from API.")
   "*compiler-explorer execution output*"
   "Buffer with execution output.")
 
+(defconst compiler-explorer--tool-buffer-format "*compiler-explorer tool %s*"
+  "Template for tool buffer names.")
+
 (defvar compiler-explorer--language-data nil
   "Language data for current session.")
 
@@ -295,6 +323,12 @@ Values are the example objects from API.")
 Keys are library ids, values are lists (VERSION ENTRY), where
 VERSION is the id string of the version and ENTRY is the library
 entry from function `compiler-explorer--libraries'.")
+
+(defvar compiler-explorer--selected-tools nil
+  "Alist of tools for current session.
+Keys are tool ids, and values are lists (BUFFER ARGS STDIN), where
+BUFFER is the tool's buffer, ARGS is a string with the arguments, and
+STDIN is a string.")
 
 (defvar compiler-explorer--compiler-arguments ""
   "Arguments for the compiler.")
@@ -322,12 +356,19 @@ with `json-parse', and a message is displayed.")
    ((< (buffer-size) compiler-explorer-response-limit-bytes)
     (compiler-explorer--parse-json))
    (t
-    `(:asm [(:text ,(format
-                     "ERROR: Response too large to parse. (%s kB, limit %s kB)"
-                     (/ (buffer-size) 1000)
-                     (/ compiler-explorer-response-limit-bytes 1000)))
-            (:text "Increase the limit by setting ")
-            (:text "`compiler-explorer-response-limit-bytes'")]))))
+    (let ((msg `[(:text
+                  ,(format
+                    "ERROR: Response too large to parse. (%s kB, limit %s kB)"
+                    (/ (buffer-size) 1000)
+                    (/ compiler-explorer-response-limit-bytes 1000)))
+                 (:text "Increase the limit by setting ")
+                 (:text "`compiler-explorer-response-limit-bytes'")]))
+      `(:asm ,msg
+             :stderr ,msg
+             :code -1
+             :tools ,(mapcar
+                      (lambda (id) `(:id ,id :stderr ,msg))
+                      (mapcar #'car compiler-explorer--selected-tools)))))))
 
 (defcustom compiler-explorer-output-filters '(:binary nil
                                                       :binaryObject nil
@@ -426,7 +467,15 @@ when multiple functions try to do it in a block of code.")
                            :skipAsm :json-false
                            :executorRequest ,executorRequest)
                           :filters ,(compiler-explorer--output-filters)
-                          :tools []
+                          :tools
+                          [,@(mapcar
+                              (pcase-lambda (`(,id ,_ ,args ,stdin))
+                                `(:id ,id
+                                      :args ,(seq-into
+                                              (split-string-and-unquote args)
+                                              'vector)
+                                      :stdin ,stdin))
+                              compiler-explorer--selected-tools)]
                           :libraries
                           [,@(mapcar
                               (pcase-lambda (`(,id ,version ,_))
@@ -494,7 +543,7 @@ contents are replaced destructively and point is not preserved."
 (defvar compiler-explorer-source-to-asm-mappings)
 (defun compiler-explorer--handle-compilation-response (response)
   "Handle compilation response contained in RESPONSE."
-  (pcase-let (((map :asm :stdout :stderr :code) response)
+  (pcase-let (((map :asm :stdout :stderr :code :tools) response)
               (compiler (get-buffer compiler-explorer--compiler-buffer))
               (output (get-buffer compiler-explorer--output-buffer))
               (source-to-asm-mappings nil))
@@ -531,7 +580,17 @@ contents are replaced destructively and point is not preserved."
 
       (with-demoted-errors "compilation-parse-errors: %s"
         (let ((inhibit-read-only t))
-          (compilation-parse-errors (point-min) (point-max))))))
+          (compilation-parse-errors (point-min) (point-max)))))
+
+    ;; Update tools
+    (pcase-dolist ((map :id :stderr :stdout) (seq-into tools 'list))
+      (when-let* ((toolbuf
+                   (cadr (assoc id compiler-explorer--selected-tools))))
+        (with-temp-buffer
+          (seq-do (pcase-lambda ((map :text)) (insert text "\n"))
+                  (seq-concatenate 'list stdout stderr))
+          (compiler-explorer--replace-buffer-contents toolbuf
+                                                      (current-buffer))))))
   (force-mode-line-update t))
 
 (defun compiler-explorer--handle-compiler-with-no-execution ()
@@ -756,6 +815,57 @@ output buffer."
                 map)
       'help-echo "mouse-1: Set program arguments")))
 
+(defvar compiler-explorer--tool-context)
+
+(defun compiler-explorer--header-line-format-tool ()
+  "Get mode line construct for displaying header line in tool buffers."
+  `(
+    (:eval (compiler-explorer--header-line-format-common))
+    " | "
+    ,(propertize
+      (format "Tool: %s" (compiler-explorer--tool-id))
+      'mouse-face 'header-line-highlight
+      'keymap (let ((map (make-keymap))
+                    (id (compiler-explorer--tool-id)))
+                (define-key map [header-line mouse-1]
+                            (lambda ()
+                              (interactive)
+                              (compiler-explorer-remove-tool id)))
+                map)
+      'help-echo "mouse-1: Remove this tool")
+    " | "
+    ,(propertize
+      (format "Args: '%s'"
+              (caddr (assoc (compiler-explorer--tool-id)
+                            compiler-explorer--selected-tools)))
+      'mouse-face 'header-line-highlight
+      'keymap (let ((map (make-keymap))
+                    (id (compiler-explorer--tool-id)))
+                (define-key
+                 map [header-line mouse-1]
+                 (lambda ()
+                   (interactive)
+                   (let ((compiler-explorer--tool-context id))
+                     (call-interactively #'compiler-explorer-set-tool-args))))
+                map)
+      'help-echo "mouse-1: Set program arguments")
+    " | "
+    ,(propertize
+      (format "Input: %s chars"
+              (length (cadddr (assoc (compiler-explorer--tool-id)
+                                     compiler-explorer--selected-tools))))
+      'mouse-face 'header-line-highlight
+      'keymap (let ((map (make-keymap))
+                    (id (compiler-explorer--tool-id)))
+                (define-key
+                 map [header-line mouse-1]
+                 (lambda ()
+                   (interactive)
+                   (let ((compiler-explorer--tool-context id))
+                     (call-interactively #'compiler-explorer-set-tool-input))))
+                map)
+      'help-echo "mouse-1: Set tool input")))
+
 (defvar compiler-explorer-mode-map)
 
 (defun compiler-explorer--define-menu ()
@@ -856,6 +966,53 @@ output buffer."
                       (compiler-explorer-remove-library library-id))))
           compiler-explorer--selected-libraries))
       "--"
+      ("Add tool"
+       :enable (not
+                (seq-empty-p
+                 (compiler-explorer--tools
+                  (plist-get compiler-explorer--language-data :id))))
+       ,@(mapcar
+          (pcase-lambda (`(,id . ,_))
+            (vector id
+                    (lambda ()
+                      (interactive)
+                      (compiler-explorer-add-tool id))
+                    :enable
+                    `(null (assoc ,id compiler-explorer--selected-tools))))
+          (compiler-explorer--tools
+           (plist-get compiler-explorer--language-data :id))))
+      ("Remove tool"
+       :enable (not (null compiler-explorer--selected-tools))
+       ,@(mapcar
+          (lambda (id)
+            (vector id
+                    (lambda ()
+                      (interactive)
+                      (compiler-explorer-remove-tool id))))
+          (mapcar #'car compiler-explorer--selected-tools)))
+      ("Set tool arguments"
+       :enable (not (null compiler-explorer--selected-tools))
+       ,@(mapcar
+          (lambda (id)
+            (vector
+             id
+             (lambda ()
+               (interactive)
+               (let ((compiler-explorer--tool-context id))
+                 (call-interactively #'compiler-explorer-set-tool-args)))))
+          (mapcar #'car compiler-explorer--selected-tools)))
+      ("Set tool input"
+       :enable (not (null compiler-explorer--selected-tools))
+       ,@(mapcar
+          (lambda (id)
+            (vector
+             id
+             (lambda ()
+               (interactive)
+               (let ((compiler-explorer--tool-context id))
+                 (call-interactively #'compiler-explorer-set-tool-input)))))
+          (mapcar #'car compiler-explorer--selected-tools)))
+      "--"
       ["Set execution arguments" compiler-explorer-set-execution-args]
       ["Set execution input" compiler-explorer-set-input]
       "--"
@@ -899,6 +1056,11 @@ output buffer."
 (defvar compiler-explorer--recompile-timer)
 (defvar compiler-explorer--cleaning-up nil)
 
+(defun compiler-explorer--tool-id ()
+  "Get the ID of the tool in the current buffer, or return nil."
+  (car
+   (cl-find (current-buffer) compiler-explorer--selected-tools :key #'cadr)))
+
 (defun compiler-explorer--session-savable-p ()
   "Return non-nil if the current session should be saved.
 A session that has no source code or is the same as an
@@ -941,16 +1103,18 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
                           (ignore-errors (kill-buffer buffer)))
                   (let ((kill-buffer-hook nil))
                     (kill-buffer (current-buffer))))))))
-        (list (get-buffer compiler-explorer--buffer)
-              (get-buffer compiler-explorer--compiler-buffer)
-              (get-buffer compiler-explorer--output-buffer)
-              (get-buffer compiler-explorer--exe-output-buffer)))
+        (cl-list* (get-buffer compiler-explorer--buffer)
+                  (get-buffer compiler-explorer--compiler-buffer)
+                  (get-buffer compiler-explorer--output-buffer)
+                  (get-buffer compiler-explorer--exe-output-buffer)
+                  (mapcar #'cadr compiler-explorer--selected-tools)))
 
   (setq compiler-explorer--last-compilation-request nil)
   (setq compiler-explorer--recompile-timer nil)
   (setq compiler-explorer--last-exe-request nil)
   (setq compiler-explorer--compiler-data nil)
   (setq compiler-explorer--selected-libraries nil)
+  (setq compiler-explorer--selected-tools nil)
   (setq compiler-explorer--language-data nil)
   (setq compiler-explorer--compiler-arguments "")
   (setq compiler-explorer--execution-arguments "")
@@ -1197,6 +1361,9 @@ This is eldoc function for compiler explorer."
     :compiler ,(plist-get compiler-explorer--compiler-data :id)
     :libs ,(mapcar (pcase-lambda (`(,id ,vid ,_)) (cons id vid))
                    compiler-explorer--selected-libraries)
+    :tools ,(mapcar (pcase-lambda (`(,id ,_ ,args ,stdin))
+                      (list id args stdin))
+                    compiler-explorer--selected-tools)
     :args ,compiler-explorer--compiler-arguments
     :exe-args ,compiler-explorer--execution-arguments
     :input ,compiler-explorer--execution-input
@@ -1228,7 +1395,7 @@ session.  The cdr will be a cons (SESSION-DATA . INDEX-IN-RING)."
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
   (pcase-let
-      (((map :version :lang-name :compiler :libs :args :exe-args :input
+      (((map :version :lang-name :compiler :libs :tools :args :exe-args :input
              :source)
         session))
     (or version (setq version 0))
@@ -1238,6 +1405,7 @@ It must have been created with `compiler-explorer--current-session'."
                                         (lang-name ,lang-name stringp)
                                         (compiler ,compiler stringp)
                                         (libs ,libs listp)
+                                        (tools ,tools listp)
                                         (args ,args stringp)
                                         (exe-args ,exe-args stringp)
                                         (input ,input stringp)
@@ -1254,6 +1422,10 @@ It must have been created with `compiler-explorer--current-session'."
           (set-buffer-modified-p nil)))
       (pcase-dolist (`(,id . ,vid) libs)
         (compiler-explorer-add-library id vid))
+      (pcase-dolist (`(,id ,args ,stdin) tools)
+        (compiler-explorer-add-tool id)
+        (compiler-explorer-set-tool-args id args)
+        (compiler-explorer-set-tool-input id stdin))
       (compiler-explorer-set-compiler-args args)
       (compiler-explorer-set-execution-args exe-args)
       (compiler-explorer-set-input input))
@@ -1334,16 +1506,20 @@ It must have been created with `compiler-explorer--current-session'."
                  #'compiler-explorer--compilation-parse-errors-filename))
     ((pred (equal compiler-explorer--exe-output-buffer))
      (setq header-line-format
-           `(:eval (compiler-explorer--header-line-format-executor))))))
+           `(:eval (compiler-explorer--header-line-format-executor))))
+    ((guard (compiler-explorer--tool-id))
+     (setq header-line-format
+           `(:eval (compiler-explorer--header-line-format-tool))))))
 
 (defun compiler-explorer--local-mode-maybe-enable ()
   "Enable `compiler-explorer--local-mode' if required."
   (when (memq (current-buffer)
-              (list
+              (cl-list*
                (get-buffer compiler-explorer--buffer)
                (get-buffer compiler-explorer--compiler-buffer)
                (get-buffer compiler-explorer--output-buffer)
-               (get-buffer compiler-explorer--exe-output-buffer)))
+               (get-buffer compiler-explorer--exe-output-buffer)
+               (mapcar #'cadr compiler-explorer--selected-tools)))
     (compiler-explorer--local-mode +1)))
 
 (define-globalized-minor-mode compiler-explorer-mode
@@ -1369,8 +1545,11 @@ is a symbol, either:
  - `compiler'
  - `compiler-args'
  - `execution-args'
+ - `tool-args'
+ - `tool-input'
 
-VALUE is the new value, a string.")
+VALUE is the new value, a string; or a cons cell (ID . STRING) for
+tool-* changes.")
 
 (defun compiler-explorer-jump (&optional which)
   "Jump to corresponding ASM block or source code line.
@@ -1599,6 +1778,153 @@ It must have previously been added with
   ;; Repopulate list of libraries to remove
   (compiler-explorer--define-menu))
 
+(defvar compiler-explorer-dedicate-windows)
+
+(defun compiler-explorer-add-tool (id)
+  "Add tool ID to the current compilation."
+  (interactive
+   (let* ((lang (or (and (compiler-explorer--active-p)
+                         (plist-get compiler-explorer--language-data :id))
+                    (user-error "Not in a `compiler-explorer' session")))
+          (candidates (mapcar #'car (compiler-explorer--tools lang)))
+          (res (completing-read
+                "Add tool: " candidates
+                ;; Ignore tools that are already added.
+                (lambda (id)
+                  (null (assoc id compiler-explorer--selected-tools)))
+                t)))
+     (list res)))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
+
+  (when (assoc id compiler-explorer--selected-tools)
+    (error "Tool %s already added" id))
+
+  (let ((buf (generate-new-buffer
+              (format compiler-explorer--tool-buffer-format id)))
+        window)
+    (push (list id buf "" "") compiler-explorer--selected-tools)
+    (unless noninteractive
+      (setq window (display-buffer buf))
+      (when (and (windowp window) compiler-explorer-dedicate-windows)
+        (set-window-dedicated-p window t)))
+    (with-current-buffer buf
+      (compiler-explorer--local-mode)
+      (setq buffer-read-only t)
+      (setq buffer-undo-list t)))
+
+  (compiler-explorer--request-async)
+
+  ;; Repopulate list of tools to remove
+  (compiler-explorer--define-menu))
+
+(defun compiler-explorer-remove-tool (id)
+  "Remove tool ID from the current compilation."
+  (interactive
+   (if (compiler-explorer--active-p)
+       (let ((tools (mapcar #'car compiler-explorer--selected-tools)))
+         (list (completing-read "Remove tool: " tools nil t nil nil
+                                (compiler-explorer--tool-id))))
+     (user-error "Not in a `compiler-explorer' session")))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
+
+  (if-let* ((entry (cdr (assoc id compiler-explorer--selected-tools)))
+            (buf (car entry)))
+      (progn
+        (setq compiler-explorer--selected-tools
+              (delq (assoc id compiler-explorer--selected-tools)
+                    compiler-explorer--selected-tools))
+        (with-current-buffer buf
+          (dolist (window (window-list))
+            (with-selected-window window
+              (when (and (eq (window-buffer) buf)
+                         (window-parent window))
+                (delete-window window))))
+          (let ((kill-buffer-hook
+                 (remq #'compiler-explorer--cleanup kill-buffer-hook)))
+            (kill-buffer (current-buffer)))))
+    (error "Tool is not added: %s" id))
+
+  (compiler-explorer--request-async)
+  ;; Repopulate list of tools to remove
+  (compiler-explorer--define-menu))
+
+(defvar compiler-explorer--tool-context nil
+  "Let-bound variable that contains the tool id value for various commands.
+This is used so that we don't query the user for ID when they obviously
+want to perform some command for a specific tool.")
+
+(defvar compiler-explorer-set-tool-args-history nil
+  "Minibuffer history for `compiler-explorer-set-tool-args'.")
+
+(defun compiler-explorer-set-tool-args (id args)
+  "Set the arguments of tool with ID to string ARGS."
+  (interactive
+   (and
+    (or (compiler-explorer--active-p)
+        (user-error "Not in a `compiler-explorer' session"))
+    (let* ((tools (or (mapcar #'car compiler-explorer--selected-tools)
+                      (user-error "No tools selected")))
+           (tool
+            (or compiler-explorer--tool-context
+                (if (cdr tools)
+                    (completing-read
+                     "Set args for tool: " tools nil t nil nil
+                     (compiler-explorer--tool-id))
+                  (car tools))))
+           (args (read-from-minibuffer
+                  (format "Set arguments for tool '%s': " tool)
+                  (caddr (assoc tool compiler-explorer--selected-tools))
+                  nil nil 'compiler-explorer-set-tool-args-history)))
+      (list tool args))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
+
+  (if-let* ((tool-data (assoc id compiler-explorer--selected-tools)))
+      (setf (caddr tool-data) args)
+    (error "Tool %S not added" id))
+
+  (compiler-explorer--request-async)
+
+  (run-hook-with-args 'compiler-explorer-params-change-hook
+                      'tool-args (cons id args)))
+
+(defun compiler-explorer-set-tool-input (id input)
+  "Set the standard input of tool with ID to string INPUT."
+  (interactive
+   (and
+    (or (compiler-explorer--active-p)
+        (user-error "Not in a `compiler-explorer' session"))
+    (let* ((tools (or (mapcar #'car compiler-explorer--selected-tools)
+                      (user-error "No tools selected")))
+           (lang (plist-get compiler-explorer--language-data :id))
+           (tool
+            (or compiler-explorer--tool-context
+                (if (cdr tools)
+                    (completing-read
+                     "Set stdin for tool: " tools nil t nil nil
+                     (compiler-explorer--tool-id))
+                  (car tools))))
+           (tool-data
+            (map-elt (compiler-explorer--tools lang) tool)))
+      (unless (plist-get tool-data :allowStdin)
+        (user-error "Tool %S does not support setting stdin" tool))
+      (list tool (read-from-minibuffer
+                  (format "Set input for tool '%s': " tool)
+                  (cadddr (assoc tool compiler-explorer--selected-tools)))))))
+  (unless (compiler-explorer--active-p)
+    (error "Not in a `compiler-explorer' session"))
+
+  (if-let* ((tool-data (assoc id compiler-explorer--selected-tools)))
+      (setf (cadddr tool-data) input)
+    (error "Tool %S not added" id))
+
+  (compiler-explorer--request-async)
+
+  (run-hook-with-args 'compiler-explorer-params-change-hook
+                      'tool-input (cons id input)))
+
 (defun compiler-explorer-previous-session (&optional nth)
   "Restore previous session.
 With optional argument NTH (default 0), restore NTH previous
@@ -1711,17 +2037,20 @@ argument, prompt for sessions to discard."
 (defvar compiler-explorer-layouts
   '((source . asm)
     (source . [asm output])
-    (source [asm output] . exe))
+    (source [asm output] . exe)
+    (source [asm output] . [exe [:tools]]))
   "List of layouts.
 
 A layout can be either:
 
-  - a symbol (one of `source', `asm', `output', `exe')
+  - a symbol (one of `source', `asm', `output', `exe', `tool')
     means fill the available space with that buffer
   - a cons (left . right) - recursively apply layouts
     left and right after splitting available space horizontally
   - a vector [upper lower] - recursively apply layouts
     above and below after splitting available space vertically
+  - a vector [:tools] - display all added tools vertically in the
+    remaining space
   - a number, n - apply n-th layout in this variable")
 
 (defcustom compiler-explorer-default-layout 0
@@ -1775,6 +2104,10 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
            ('exe (override-window-buffer
                   (selected-window)
                   (get-buffer compiler-explorer--exe-output-buffer)))
+           ((and 'tool (guard compiler-explorer--selected-tools))
+            (override-window-buffer
+                   (selected-window)
+                   (cadr (pop compiler-explorer--selected-tools))))
            (`(,left . ,right)
             (let ((right-window (split-window-right)))
               (do-it left)
@@ -1784,7 +2117,16 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
             (let ((lower-window (split-window-vertically)))
               (do-it upper)
               (with-selected-window lower-window
-                (do-it lower)))))))
+                (do-it lower))))
+           (`[:tools]
+            (let ((compiler-explorer--selected-tools
+                   (copy-sequence compiler-explorer--selected-tools)))
+              (if compiler-explorer--selected-tools
+                  (if (cdr compiler-explorer--selected-tools)
+                      (do-it [tool [:tools]])
+                    (do-it 'tool))
+                (when (window-parent)
+                  (delete-window))))))))
     (or layout (setq layout compiler-explorer-default-layout))
     (when (numberp layout)
       (setq layout (% layout (length compiler-explorer-layouts)))
@@ -1794,7 +2136,11 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
         (select-window (split-window-horizontally)))
       (set-window-dedicated-p (selected-window) nil))
     (delete-other-windows)
-    (do-it layout)
+    (condition-case err
+        (let ((compiler-explorer--selected-tools
+               (copy-sequence compiler-explorer--selected-tools)))
+          (do-it layout))
+      (error (message "Could not apply layout %s: %s" layout err)))
     (balance-windows)))
 
 (defun compiler-explorer-load-example (example)
@@ -1836,6 +2182,13 @@ With an optional prefix argument OPEN, open that link in a browser."
                       (pcase-lambda (`(,id ,version ,_))
                         `(:id ,id :version ,version))
                       compiler-explorer--selected-libraries)]
+            :tools [,@(mapcar
+                       (pcase-lambda (`(,id ,_ ,args ,stdin))
+                         `(:id ,id
+                               :args ,(seq-into (split-string-and-unquote args)
+                                                'vector)
+                               :stdin ,stdin))
+                       compiler-explorer--selected-tools)]
             :options ,compiler-explorer--compiler-arguments
             :filters ,(compiler-explorer--output-filters)))
          (state
@@ -1882,7 +2235,7 @@ by `compiler-explorer-make-link', or created by the website itself."
                ((map :language
                      :source
                      (:compilers
-                      (seq (map (:id compiler-id) :options :libs)))
+                      (seq (map (:id compiler-id) :options :libs :tools)))
                      (:executors
                       (seq (map :arguments :stdin))))
                 session)
@@ -1895,6 +2248,14 @@ by `compiler-explorer-make-link', or created by the website itself."
                                  (format "Invalid library: %s" lib)
                                  :warning)))
             libs)
+    (seq-do (pcase-lambda ((map :id :args :stdin))
+              (compiler-explorer-add-tool id)
+              (if (or (listp args) (vectorp args))
+                  (compiler-explorer-set-tool-args id (string-join args ?\ ))
+                (compiler-explorer-set-tool-args id args))
+              (unless (string-empty-p stdin)
+                (compiler-explorer-set-tool-input id stdin)))
+            tools)
     (compiler-explorer-set-compiler-args options)
     (when arguments
       (compiler-explorer-set-execution-args arguments))
