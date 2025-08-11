@@ -1061,6 +1061,43 @@ output buffer."
   (car
    (cl-find (current-buffer) compiler-explorer--selected-tools :key #'cadr)))
 
+(defun compiler-explorer--window-layout (&optional window)
+  "Get the window layout of WINDOW, suitable for `compiler-explorer-layout'.
+WINDOW if nil defaults to the frame's root window."
+  (or window (setq window (frame-root-window)))
+  (cond
+   ((window-live-p window)
+    (pcase (window-buffer window)
+      ((pred (eq (get-buffer compiler-explorer--buffer)))
+       'source)
+      ((pred (eq (get-buffer compiler-explorer--compiler-buffer)))
+       'asm)
+      ((pred (eq (get-buffer compiler-explorer--output-buffer)))
+       'output)
+      ((pred (eq (get-buffer compiler-explorer--exe-output-buffer)))
+       'exe)
+      ((pred (lambda (buf)
+               (memq buf (mapcar #'cadr compiler-explorer--selected-tools))))
+       'tool)))
+   ((window-left-child window)
+    (cl-loop
+     with child = (window-left-child window)
+     with ret = nil
+     while child
+     for layout = (compiler-explorer--window-layout child)
+     do (setq ret (if ret (cons ret layout) layout)
+              child (window-next-sibling child))
+     finally return ret))
+   ((window-top-child window)
+    (cl-loop
+     with child = (window-top-child window)
+     with ret = nil
+     while child
+     for layout = (compiler-explorer--window-layout child)
+     do (setq ret (if ret (vector ret layout) layout)
+              child (window-next-sibling child))
+     finally return ret))))
+
 (defun compiler-explorer--session-savable-p ()
   "Return non-nil if the current session should be saved.
 A session that has no source code or is the same as an
@@ -1368,7 +1405,8 @@ This is eldoc function for compiler explorer."
     :exe-args ,compiler-explorer--execution-arguments
     :input ,compiler-explorer--execution-input
     :source ,(with-current-buffer (get-buffer compiler-explorer--buffer)
-               (buffer-substring-no-properties (point-min) (point-max)))))
+               (buffer-substring-no-properties (point-min) (point-max)))
+    :layout ,(unless noninteractive (compiler-explorer--window-layout))))
 
 (defun compiler-explorer--stringize-session (session)
   "Stringify a saved SESSION.
@@ -1391,12 +1429,16 @@ session.  The cdr will be a cons (SESSION-DATA . INDEX-IN-RING)."
    for i from 0
    collect (list (compiler-explorer--stringize-session session) session i)))
 
+(defcustom compiler-explorer-restore-layouts t
+  "Restore window layouts from previous sessions."
+  :type 'boolean)
+
 (defun compiler-explorer--restore-session (session)
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
   (pcase-let
       (((map :version :lang-name :compiler :libs :tools :args :exe-args :input
-             :source)
+             :source :layout)
         session))
     (or version (setq version 0))
     (when (> version 1)
@@ -1409,7 +1451,13 @@ It must have been created with `compiler-explorer--current-session'."
                                         (args ,args stringp)
                                         (exe-args ,exe-args stringp)
                                         (input ,input stringp)
-                                        (source ,source stringp)))
+                                        (source ,source stringp)
+                                        (layout ,layout
+                                                (lambda (obj)
+                                                  (or (null obj)
+                                                      (symbolp obj)
+                                                      (consp obj)
+                                                      (vectorp obj))))))
       (unless (funcall pred val)
         (error "Invalid %s: %s" sym val)))
 
@@ -1428,7 +1476,9 @@ It must have been created with `compiler-explorer--current-session'."
         (compiler-explorer-set-tool-input id stdin))
       (compiler-explorer-set-compiler-args args)
       (compiler-explorer-set-execution-args exe-args)
-      (compiler-explorer-set-input input))
+      (compiler-explorer-set-input input)
+      (when (and layout compiler-explorer-restore-layouts)
+        (compiler-explorer-layout layout)))
     (compiler-explorer--request-async)
     (compiler-explorer--define-menu)))
 
@@ -2092,6 +2142,7 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
        (do-it
          (spec)
          (pcase-exhaustive spec
+           ('nil (when (window-parent) (delete-window)))
            ((and (pred numberp) n)
             (do-it (nth n compiler-explorer-layouts)))
            ('source (override-window-buffer (selected-window)
@@ -2383,7 +2434,7 @@ compiler."
     (error "Not in a `compiler-explorer' session"))
   (compiler-explorer--cleanup))
 
-(defvar compiler-explorer-hook '(compiler-explorer-layout)
+(defvar compiler-explorer-hook '()
   "Hook run at the end of `compiler-explorer'.
 This hook can be used to run code regardless whether a session
 was created/restored.")
