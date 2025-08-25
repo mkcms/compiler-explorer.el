@@ -20,11 +20,11 @@ FILL_COMMENTARY := --eval '(progn                                             \
 	(delete-trailing-whitespace)                                          \
 	(setq fill-column 74)                                                 \
 	(narrow-to-region (search-forward "Commentary:")                      \
-                          (search-forward "Code:"))                           \
-        (goto-char (point-min))                                               \
+	  (search-forward "Code:"))                                           \
+	  (goto-char (point-min))                                             \
 	(while (re-search-forward "^;; *." nil t)                             \
 	  (fill-paragraph)                                                    \
-          (end-of-line))                                                      \
+	  (end-of-line))                                                      \
 	(save-buffer))'
 
 KEYMAP := --eval '(dolist (elt                                                \
@@ -59,11 +59,11 @@ check: ${ELC}
 lint:
 	file=$$(mktemp)                                                       \
 	&& ${emacs} -Q --batch compiler-explorer.el                           \
-		--eval '(checkdoc-file (buffer-file-name))' 2>&1 | tee $$file \
+	  --eval '(checkdoc-file (buffer-file-name))' 2>&1 | tee $$file       \
 	&& test -z "$$(cat $$file)"                                           \
 	&& (grep -n -E "^.{80,}" compiler-explorer.el `# Catch long lines`    \
 	    | sed                                                             \
-		-r '1d;2d;s/^([0-9]+).*/compiler-explorer.el:\1: Too long/;q1')
+	  -r '1d;2d;s/^([0-9]+).*/compiler-explorer.el:\1: Too long/;q1')
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
 _baremacs: ${ELC}
