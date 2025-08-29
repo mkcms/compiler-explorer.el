@@ -27,83 +27,82 @@
 (require 'compiler-explorer)
 (require 'ert)
 
-(defmacro compiler-explorer-test--with-session (lang compiler &rest body)
+(defmacro ce-test--with-session (lang compiler &rest body)
   (declare (indent 2) (debug (sexp sexp body)))
-  `(let ((compiler-explorer-new-session-hook '())
-         (compiler-explorer-response-limit-bytes 1000000000))
+  `(let ((ce-new-session-hook '())
+         (ce-response-limit-bytes 1000000000))
      (unwind-protect
          (progn
-           (compiler-explorer-new-session ,lang ,compiler)
+           (ce-new-session ,lang ,compiler)
            ,@body)
-       (compiler-explorer--cleanup))))
+       (ce--cleanup))))
 
-(defun compiler-explorer-test--wait ()
+(defun ce-test--wait ()
   "Wait until compilation finishes."
   (with-timeout (15 (error "Test timed out"))
-    (while (or (member compiler-explorer--recompile-timer timer-list)
-               (process-live-p
-                compiler-explorer--last-compilation-request)
-               (and compiler-explorer--last-exe-request
-                    (process-live-p compiler-explorer--last-exe-request)))
+    (while (or (member ce--recompile-timer timer-list)
+               (process-live-p ce--last-compilation-request)
+               (and ce--last-exe-request
+                    (process-live-p ce--last-exe-request)))
       (accept-process-output nil 0.1))))
 
-(defun compiler-explorer-test--help-message ()
+(defun ce-test--help-message ()
   "Get the documentation string for thing at point."
-  (with-current-buffer compiler-explorer--compiler-buffer
-    (should (memq 'compiler-explorer--compilation-eldoc-documentation-function
+  (with-current-buffer ce--compiler-buffer
+    (should (memq 'ce--compilation-eldoc-documentation-function
                   eldoc-documentation-functions))
     (let (msg)
-      (compiler-explorer--compilation-eldoc-documentation-function
+      (ce--compilation-eldoc-documentation-function
        (lambda (x &rest _more) (setq msg x)))
       (with-timeout (15 (error "Test timed out"))
         (while (null msg)
           (accept-process-output nil 0.1)))
       msg)))
 
-(defun compiler-explorer-test--insert (string)
+(defun ce-test--insert (string)
   "Erase source buffer then insert STRING and wait until compilation finishes."
-  (with-current-buffer compiler-explorer--buffer
+  (with-current-buffer ce--buffer
     (erase-buffer)
     (insert string)
-    (compiler-explorer-test--wait)))
+    (ce-test--wait)))
 
-(defun compiler-explorer-test--compilation-result ()
+(defun ce-test--compilation-result ()
   "Get the contents of compilation buffer."
-  (with-current-buffer compiler-explorer--compiler-buffer
+  (with-current-buffer ce--compiler-buffer
     (buffer-substring-no-properties (point-min) (point-max))))
 
-(defun compiler-explorer-test--execution-result ()
+(defun ce-test--execution-result ()
   "Get the contents of execution stdout buffer."
-  (with-current-buffer compiler-explorer--exe-output-buffer
+  (with-current-buffer ce--exe-output-buffer
     (buffer-substring-no-properties (point-min) (point-max))))
 
 
 ;; Tests
 
-(ert-deftest compiler-explorer-api-languages ()
+(ert-deftest ce-api-languages ()
   (let ((cpp (seq-find (lambda (l) (string= (plist-get l :name) "C++"))
-                       (compiler-explorer--languages))))
+                       (ce--languages))))
     (should (stringp (plist-get cpp :id)))
     (should (stringp (plist-get cpp :defaultCompiler)))
     (should (stringp (plist-get cpp :example)))
     (should (cl-find ".cpp" (plist-get cpp :extensions) :test #'string=))))
 
-(ert-deftest compiler-explorer-api-compilers ()
+(ert-deftest ce-api-compilers ()
   (let ((gcc (seq-find (lambda (c)
                          (string= (plist-get c :name) "x86-64 gcc (trunk)"))
-                       (compiler-explorer--compilers))))
+                       (ce--compilers))))
     (should (stringp (plist-get gcc :id)))
     (should (memq :supportsExecute gcc))
     (let* ((lang (plist-get gcc :lang))
            (lang-data (seq-find (lambda (l) (string= (plist-get l :id) lang))
-                                (compiler-explorer--languages))))
+                                (ce--languages))))
       (should (stringp lang))
       (should lang-data))))
 
-(ert-deftest compiler-explorer-api-libraries ()
+(ert-deftest ce-api-libraries ()
   (let* ((cpp (seq-find (lambda (x) (string= (plist-get x :name) "C++"))
-                        (compiler-explorer--languages)))
-         (libs (compiler-explorer--libraries (plist-get cpp :id))))
+                        (ce--languages)))
+         (libs (ce--libraries (plist-get cpp :id))))
     (should libs)
     (let* ((lib (seq-find (lambda (l)
                             (string-match-p ".*Boost.*" (plist-get l :name)))
@@ -116,10 +115,10 @@
         (should (stringp (plist-get first :id)))
         (should (stringp (plist-get first :version)))))))
 
-(ert-deftest compiler-explorer-api-tools ()
+(ert-deftest ce-api-tools ()
   (let* ((cpp (seq-find (lambda (x) (string= (plist-get x :name) "C++"))
-                        (compiler-explorer--languages)))
-         (tools (compiler-explorer--tools (plist-get cpp :id))))
+                        (ce--languages)))
+         (tools (ce--tools (plist-get cpp :id))))
     (should tools)
     (let* ((clangtidy (map-elt tools "clangtidytrunk")))
       (should clangtidy)
@@ -128,13 +127,13 @@
       (should (plist-get clangtidy :languageId))
       (should (plist-get clangtidy :allowStdin)))))
 
-(ert-deftest compiler-explorer-api-asm-opcode-docs ()
+(ert-deftest ce-api-asm-opcode-docs ()
   (with-temp-buffer
     (let ((buf (current-buffer)))
-      (compiler-explorer--asm-opcode-doc "amd64" "pushq"
-                                         (lambda (doc)
-                                           (with-current-buffer buf
-                                             (insert doc))))
+      (ce--asm-opcode-doc "amd64" "pushq"
+                          (lambda (doc)
+                            (with-current-buffer buf
+                              (insert doc))))
       (with-timeout (5 (error "Test timed out"))
         (while (= (buffer-size) 0)
           (accept-process-output)))
@@ -143,18 +142,18 @@
       (should (search-forward "source operand on the top of the stack"))))
   (with-temp-buffer
     (let ((buf (current-buffer)))
-      (compiler-explorer--asm-opcode-doc "python" "MAKE_FUNCTION"
-                                         (lambda (doc)
-                                           (with-current-buffer buf
-                                             (insert doc))))
+      (ce--asm-opcode-doc "python" "MAKE_FUNCTION"
+                          (lambda (doc)
+                            (with-current-buffer buf
+                              (insert doc))))
       (with-timeout (5 (error "Test timed out"))
         (while (= (buffer-size) 0)
           (accept-process-output)))
       (goto-char (point-min))
       (should (search-forward "Pushes a new function object on the stack.")))))
 
-(ert-deftest compiler-explorer-api-examples ()
-  (let ((examples (compiler-explorer--examples)))
+(ert-deftest ce-api-examples ()
+  (let ((examples (ce--examples)))
     (should examples)
     (should (listp examples))
     (should (cl-every #'consp examples))
@@ -165,188 +164,174 @@
             (should (stringp (plist-get data :name)))
             (should (stringp (plist-get data :lang))))
           examples)
-    (setq examples (compiler-explorer--examples "c++"))
+    (setq examples (ce--examples "c++"))
     (should examples)
     (mapc (pcase-lambda (`(,_ . ,data))
-            (setq data (compiler-explorer--example "c++" (plist-get data :file)))
+            (setq data (ce--example "c++" (plist-get data :file)))
             (should (stringp (plist-get data :file))))
           examples)))
 
-(ert-deftest compiler-explorer-auto-mode ()
+(ert-deftest ce-auto-mode ()
   "Test that major mode is set automatically from language."
-  (compiler-explorer-test--with-session "C++" nil
-    (with-current-buffer (get-buffer compiler-explorer--buffer)
+  (ce-test--with-session "C++" nil
+    (with-current-buffer (get-buffer ce--buffer)
       (should (eq major-mode 'c++-mode)))
-    (with-current-buffer (get-buffer compiler-explorer--compiler-buffer)
+    (with-current-buffer (get-buffer ce--compiler-buffer)
       (should (eq major-mode 'asm-mode))))
-  (compiler-explorer-test--with-session "Python" nil
-    (with-current-buffer (get-buffer compiler-explorer--buffer)
+  (ce-test--with-session "Python" nil
+    (with-current-buffer (get-buffer ce--buffer)
       (should (eq major-mode 'python-mode)))))
 
-(ert-deftest compiler-explorer-auto-recompilation ()
+(ert-deftest ce-auto-recompilation ()
   "Test that modifying the source buffer triggers recompilation."
-  (compiler-explorer-test--with-session "C++" nil
-    (compiler-explorer-test--insert
+  (ce-test--with-session "C++" nil
+    (ce-test--insert
      "int add(int a, int b) { return a + b; }\n")
-    (string-match-p "add(int, int):"
-                    (compiler-explorer-test--compilation-result))
-    (compiler-explorer-test--insert
-     "float sub(float a, float b) { return a - b; }\n")
+    (string-match-p "add(int, int):" (ce-test--compilation-result))
+    (ce-test--insert "float sub(float a, float b) { return a - b; }\n")
     (should
-     (string-match-p "sub(float, float):"
-                     (compiler-explorer-test--compilation-result)))))
+     (string-match-p "sub(float, float):" (ce-test--compilation-result)))))
 
-(ert-deftest compiler-explorer-switching-compilers ()
+(ert-deftest ce-switching-compilers ()
   "Check that switching compilers works and triggers recompilation."
-  (compiler-explorer-test--with-session "C++" "x86-64 gcc 15.1"
-    (compiler-explorer-test--insert "
+  (ce-test--with-session "C++" "x86-64 gcc 15.1"
+    (ce-test--insert "
 #ifdef __clang__
 int foo(int) { return 1; }
 #else
 int bar(int) { return 2; }
 #endif
 ")
-    (should (string-match-p "bar(int):"
-                            (compiler-explorer-test--compilation-result)))
+    (should (string-match-p "bar(int):" (ce-test--compilation-result)))
 
-    (compiler-explorer-set-compiler "x86-64 clang (trunk)")
-    (compiler-explorer-test--wait)
-    (should (string-match-p "foo(int):"
-                            (compiler-explorer-test--compilation-result)))))
+    (ce-set-compiler "x86-64 clang (trunk)")
+    (ce-test--wait)
+    (should (string-match-p "foo(int):" (ce-test--compilation-result)))))
 
-(ert-deftest compiler-explorer-asm-opcode-docs ()
+(ert-deftest ce-asm-opcode-docs ()
   "Check that we can see ASM opcode documentation."
-  (compiler-explorer-test--with-session "Assembly" "x86-64 clang (trunk)"
-    (compiler-explorer-set-compiler "x86-64 clang (trunk)")
+  (ce-test--with-session "Assembly" "x86-64 clang (trunk)"
+    (ce-set-compiler "x86-64 clang (trunk)")
 
-    (compiler-explorer-test--insert
-"
+    (ce-test--insert
+     "
 foo:
     xor %rdx, %rax
     inc %rcx
     jmpq *%rax
 ")
-    (compiler-explorer-test--wait)
+    (ce-test--wait)
 
-    (with-current-buffer compiler-explorer--compiler-buffer
+    (with-current-buffer ce--compiler-buffer
 
       (goto-char (point-min))
       (search-forward "xor")
       (forward-char -1)
       (should (string-match-p "Performs a bitwise exclusive OR"
-                              (compiler-explorer-test--help-message)))
+                              (ce-test--help-message)))
 
       (goto-char (point-min))
       (search-forward "inc")
       (forward-char -1)
       (should (string-match-p "Adds 1 to the destination operand"
-                              (compiler-explorer-test--help-message)))
+                              (ce-test--help-message)))
 
       (goto-char (point-min))
       (search-forward "jmp")
       (forward-char -1)
       (should (string-match-p "Transfers program control to a different point"
-                              (compiler-explorer-test--help-message))))))
+                              (ce-test--help-message))))))
 
-(ert-deftest compiler-explorer-loading-example ()
+(ert-deftest ce-loading-example ()
   "Check that we can load an example."
-  (compiler-explorer-test--with-session "C++" "x86-64 clang (trunk)"
-    (with-current-buffer compiler-explorer--buffer
+  (ce-test--with-session "C++" "x86-64 clang (trunk)"
+    (with-current-buffer ce--buffer
       (erase-buffer))
 
-    (compiler-explorer-load-example "Max array")
+    (ce-load-example "Max array")
 
-    (compiler-explorer-test--wait)
+    (ce-test--wait)
 
-    (with-current-buffer compiler-explorer--buffer
+    (with-current-buffer ce--buffer
       (should-not (string-empty-p (buffer-string))))
 
     (should-not
-     (string-match-p
-      "Compilation failed" (compiler-explorer-test--compilation-result)))))
+     (string-match-p "Compilation failed" (ce-test--compilation-result)))))
 
-(ert-deftest compiler-explorer-setting-compiler-args ()
+(ert-deftest ce-setting-compiler-args ()
   "Check that setting arguments works and triggers recompilation."
-  (compiler-explorer-test--with-session "C++" nil
-    (compiler-explorer-test--insert "int f() { return unknown; }\n")
+  (ce-test--with-session "C++" nil
+    (ce-test--insert "int f() { return unknown; }\n")
     (should (string-match-p "Compilation failed"
-                            (compiler-explorer-test--compilation-result)))
+                            (ce-test--compilation-result)))
 
-    (compiler-explorer-set-compiler-args "-Dunknown=123")
-    (compiler-explorer-test--wait)
-    (should (string-match-p "mov *eax, 123"
-                            (compiler-explorer-test--compilation-result)))
+    (ce-set-compiler-args "-Dunknown=123")
+    (ce-test--wait)
+    (should (string-match-p "mov *eax, 123" (ce-test--compilation-result)))
 
-    (compiler-explorer-set-compiler-args "-Dunknown=54321")
-    (compiler-explorer-test--wait)
-    (should (string-match-p "mov *eax, 54321"
-                            (compiler-explorer-test--compilation-result)))))
+    (ce-set-compiler-args "-Dunknown=54321")
+    (ce-test--wait)
+    (should (string-match-p "mov *eax, 54321" (ce-test--compilation-result)))))
 
-(ert-deftest compiler-explorer-adding-removing-libs ()
-  (compiler-explorer-test--with-session "C++" nil
-    (compiler-explorer-test--insert "#include <boost/any.hpp>
+(ert-deftest ce-adding-removing-libs ()
+  (ce-test--with-session "C++" nil
+    (ce-test--insert "#include <boost/any.hpp>
 int foo(boost::any a) { return 1; }")
     (should (string-match-p "Compilation failed"
-                            (compiler-explorer-test--compilation-result)))
+                            (ce-test--compilation-result)))
 
-    (compiler-explorer-add-library "boost" "174")
-    (compiler-explorer-test--wait)
-    (should (string-match-p "foo(boost::any):"
-                            (compiler-explorer-test--compilation-result)))
+    (ce-add-library "boost" "174")
+    (ce-test--wait)
+    (should (string-match-p "foo(boost::any):" (ce-test--compilation-result)))
 
-    (compiler-explorer-remove-library "boost")
-    (compiler-explorer-test--wait)
+    (ce-remove-library "boost")
+    (ce-test--wait)
     (should (string-match-p "Compilation failed"
-                            (compiler-explorer-test--compilation-result)))))
+                            (ce-test--compilation-result)))))
 
-(ert-deftest compiler-explorer-tools ()
-  (compiler-explorer-test--with-session "C++" nil
-    (compiler-explorer-test--insert "#include <map>
+(ert-deftest ce-tools ()
+  (ce-test--with-session "C++" nil
+    (ce-test--insert "#include <map>
 #include <string>
 
 int foo(  std::string   a) {     return    1   ; }")
 
-    (compiler-explorer-add-tool "clangformattrunk")
-    (compiler-explorer-add-tool "iwyu")
-    (compiler-explorer-add-tool "clangtidytrunk")
-    (compiler-explorer-add-tool "clangquerytrunk")
-    (compiler-explorer-set-tool-args "clangtidytrunk" "--help")
-    (compiler-explorer-set-tool-input "clangquerytrunk"
-                                      "m functionDecl().bind(\"x\")")
+    (ce-add-tool "clangformattrunk")
+    (ce-add-tool "iwyu")
+    (ce-add-tool "clangtidytrunk")
+    (ce-add-tool "clangquerytrunk")
+    (ce-set-tool-args "clangtidytrunk" "--help")
+    (ce-set-tool-input "clangquerytrunk" "m functionDecl().bind(\"x\")")
 
-    (compiler-explorer-test--wait)
-    (with-current-buffer
-        (format compiler-explorer--tool-buffer-format "clangformattrunk")
+    (ce-test--wait)
+    (with-current-buffer (format ce--tool-buffer-format "clangformattrunk")
       (should (string= "#include <map>
 #include <string>
 
 int foo(std::string a) { return 1; }
 "
                        (buffer-string))))
-    (with-current-buffer
-        (format compiler-explorer--tool-buffer-format "iwyu")
+    (with-current-buffer (format ce--tool-buffer-format "iwyu")
       (goto-char (point-min))
-      (should
-       (search-forward "should remove these lines:\n- #include <map> "))
-      (should
-       (search-forward "The full include-list for <source>:
+      (should (search-forward "should remove these lines:\n- #include <map> "))
+      (should (search-forward "The full include-list for <source>:
 #include <string>  // for string\n---\n")))
     (with-current-buffer
-        (format compiler-explorer--tool-buffer-format "clangtidytrunk")
+        (format ce--tool-buffer-format "clangtidytrunk")
       (goto-char (point-min))
       (should
        (search-forward "USAGE: clang-tidy [options]")))
     (with-current-buffer
-        (format compiler-explorer--tool-buffer-format "clangquerytrunk")
+        (format ce--tool-buffer-format "clangquerytrunk")
       (goto-char (point-min))
       (should (search-forward "Match #4:"))
       (should (re-search-forward "note:.* binds here")))))
 
-(ert-deftest compiler-explorer-creates-temp-project ()
-  (let ((compiler-explorer-make-temp-file t)
+(ert-deftest ce-creates-temp-project ()
+  (let ((ce-make-temp-file t)
         dir)
-    (compiler-explorer-test--with-session "C++" nil
-      (with-current-buffer compiler-explorer--buffer
+    (ce-test--with-session "C++" nil
+      (with-current-buffer ce--buffer
         (should buffer-file-name)
         (should (file-exists-p buffer-file-name))
         (let ((proj (project-current)))
@@ -357,15 +342,15 @@ int foo(std::string a) { return 1; }
           (should (file-directory-p (cdr proj)))
           (setq dir (cdr proj)))))
     (should-not (file-exists-p dir)))
-  (let ((compiler-explorer-make-temp-file nil))
-    (compiler-explorer-test--with-session "C++" nil
-      (with-current-buffer compiler-explorer--buffer
+  (let ((ce-make-temp-file nil))
+    (ce-test--with-session "C++" nil
+      (with-current-buffer ce--buffer
         (should-not buffer-file-name)
         (should-not (project-current))))))
 
-(ert-deftest compiler-explorer-execution ()
-  (compiler-explorer-test--with-session "C++" nil
-    (compiler-explorer-test--insert
+(ert-deftest ce-execution ()
+  (ce-test--with-session "C++" nil
+    (ce-test--insert
      "
 #include <stdio.h>
 int main() {
@@ -374,15 +359,14 @@ int main() {
     return 44;
 }")
 
-    (compiler-explorer-test--wait)
-    (should (string-match-p "test\nfoo\n"
-                            (compiler-explorer-test--execution-result)))
+    (ce-test--wait)
+    (should (string-match-p "test\nfoo\n" (ce-test--execution-result)))
     (should (string-match-p "exited with code 44"
-                            (compiler-explorer-test--execution-result)))))
+                            (ce-test--execution-result)))))
 
-(ert-deftest compiler-explorer-execution-args ()
-  (compiler-explorer-test--with-session "C++" nil
-    (compiler-explorer-test--insert
+(ert-deftest ce-execution-args ()
+  (ce-test--with-session "C++" nil
+    (ce-test--insert
      "
 #include <stdio.h>
 int main(int argc, char** argv) {
@@ -390,17 +374,15 @@ int main(int argc, char** argv) {
     printf(\"arg 2 = %s\\n\", argv[2]);
 }")
 
-    (compiler-explorer-set-execution-args "--first    --second")
-    (compiler-explorer-test--wait)
+    (ce-set-execution-args "--first    --second")
+    (ce-test--wait)
 
-    (should (string-match-p "arg 1 = --first"
-                            (compiler-explorer-test--execution-result)))
-    (should (string-match-p "arg 2 = --second"
-                            (compiler-explorer-test--execution-result)))))
+    (should (string-match-p "arg 1 = --first" (ce-test--execution-result)))
+    (should (string-match-p "arg 2 = --second" (ce-test--execution-result)))))
 
-(ert-deftest compiler-explorer-execution-input ()
-  (compiler-explorer-test--with-session "C++" nil
-    (compiler-explorer-test--insert
+(ert-deftest ce-execution-input ()
+  (ce-test--with-session "C++" nil
+    (ce-test--insert
      "
 #include <stdio.h>
 int main(int argc, char** argv) {
@@ -409,236 +391,226 @@ int main(int argc, char** argv) {
     printf(\"Input: %s\", buf);
 }")
 
-    (compiler-explorer-set-input "FOO")
-    (compiler-explorer-test--wait)
+    (ce-set-input "FOO")
+    (ce-test--wait)
 
-    (should (string-match-p "Input: FOO"
-                            (compiler-explorer-test--execution-result)))))
+    (should (string-match-p "Input: FOO" (ce-test--execution-result)))))
 
-(ert-deftest compiler-explorer-execution-support ()
-  (compiler-explorer-test--with-session "C++" "ARM GCC trunk"
-    (compiler-explorer-test--insert "int main() {}")
+(ert-deftest ce-execution-support ()
+  (ce-test--with-session "C++" "ARM GCC trunk"
+    (ce-test--insert "int main() {}")
 
-    (compiler-explorer-test--wait)
+    (ce-test--wait)
 
     (should (string-match-p
              "Error: the ARM GCC trunk compiler does not support execution"
-             (compiler-explorer-test--execution-result)))))
+             (ce-test--execution-result)))))
 
-(ert-deftest compiler-explorer-restoring-killed-session ()
-  (compiler-explorer-test--with-session "C++" nil
-    (with-current-buffer compiler-explorer--buffer
-      (compiler-explorer-set-compiler "x86-64 clang (trunk)")
-      (compiler-explorer-set-compiler-args "-Wall -Wextra")
-      (compiler-explorer-set-execution-args "1 2 3")
-      (compiler-explorer-set-input "test")
-      (compiler-explorer-add-library "boost" "174")
-      (compiler-explorer-add-tool "clangtidytrunk")
+(ert-deftest ce-restoring-killed-session ()
+  (ce-test--with-session "C++" nil
+    (with-current-buffer ce--buffer
+      (ce-set-compiler "x86-64 clang (trunk)")
+      (ce-set-compiler-args "-Wall -Wextra")
+      (ce-set-execution-args "1 2 3")
+      (ce-set-input "test")
+      (ce-add-library "boost" "174")
+      (ce-add-tool "clangtidytrunk")
       (erase-buffer)
       (insert "int foo();")
       (kill-buffer (current-buffer)))
 
-    (should-not (buffer-live-p
-                 (get-buffer compiler-explorer--compiler-buffer)))
-    (should-not (buffer-live-p
-                 (get-buffer compiler-explorer--output-buffer)))
-    (should-not (buffer-live-p
-                 (get-buffer compiler-explorer--exe-output-buffer)))
+    (should-not (buffer-live-p (get-buffer ce--compiler-buffer)))
+    (should-not (buffer-live-p (get-buffer ce--output-buffer)))
+    (should-not (buffer-live-p (get-buffer ce--exe-output-buffer)))
     (should-not (buffer-live-p
                  (get-buffer "*compiler-explorer tool clangtidytrunk*")))
-    (should-not compiler-explorer--language-data)
-    (should-not compiler-explorer--compiler-data)
-    (should-not compiler-explorer--selected-libraries)
-    (should (string-empty-p compiler-explorer--compiler-arguments))
-    (should (string-empty-p compiler-explorer--execution-arguments))
-    (should (string-empty-p compiler-explorer--execution-input))
+    (should-not ce--language-data)
+    (should-not ce--compiler-data)
+    (should-not ce--selected-libraries)
+    (should (string-empty-p ce--compiler-arguments))
+    (should (string-empty-p ce--execution-arguments))
+    (should (string-empty-p ce--execution-input))
 
-    (compiler-explorer-previous-session)
-    (with-current-buffer compiler-explorer--buffer
+    (ce-previous-session)
+    (with-current-buffer ce--buffer
       (should (string= (buffer-string) "int foo();")))
-    (should (string= (plist-get compiler-explorer--language-data :name)
-                     "C++"))
-    (should (string= (plist-get compiler-explorer--compiler-data :name)
+    (should (string= (plist-get ce--language-data :name) "C++"))
+    (should (string= (plist-get ce--compiler-data :name)
                      "x86-64 clang (trunk)"))
-    (should (string= compiler-explorer--compiler-arguments "-Wall -Wextra"))
-    (should (string= compiler-explorer--execution-arguments "1 2 3"))
-    (should (string= compiler-explorer--execution-input "test"))
-    (should (string= "boost" (caar compiler-explorer--selected-libraries)))
-    (should (string= "174" (cadar compiler-explorer--selected-libraries)))
+    (should (string= ce--compiler-arguments "-Wall -Wextra"))
+    (should (string= ce--execution-arguments "1 2 3"))
+    (should (string= ce--execution-input "test"))
+    (should (string= "boost" (caar ce--selected-libraries)))
+    (should (string= "174" (cadar ce--selected-libraries)))
     (should (buffer-live-p
              (get-buffer "*compiler-explorer tool clangtidytrunk*")))))
 
-(ert-deftest compiler-explorer-session-ring ()
-  (let ((compiler-explorer--session-ring (make-ring 5))
-        (compiler-explorer-new-session-hook nil))
+(ert-deftest ce-session-ring ()
+  (let ((ce--session-ring (make-ring 5))
+        (ce-new-session-hook nil))
     (dotimes (index 5)
-      (compiler-explorer-test--with-session "C++" nil
-        (with-current-buffer compiler-explorer--buffer
+      (ce-test--with-session "C++" nil
+        (with-current-buffer ce--buffer
           (erase-buffer)
           (insert (format "// test %s" index))
           (kill-buffer (current-buffer)))))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring (ring-copy ce--session-ring)))
 
       ;; Session "// test 1" is the 4th (index 3) oldest
-      (compiler-explorer-previous-session 3)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session 3)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string))))
 
       ;; Session "// test 4" is still the newest
-      (compiler-explorer-previous-session 0)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session 0)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 4") (buffer-string))))
 
       ;; Session "// test 3" becomes newest after "// test 4"
-      (compiler-explorer-previous-session 0)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session 0)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 3") (buffer-string))))
-      (kill-buffer compiler-explorer--buffer))
+      (kill-buffer ce--buffer))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring (ring-copy ce--session-ring)))
 
       ;; Session "// test 4" is the newest
-      (compiler-explorer-previous-session 0)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session 0)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 4") (buffer-string))))
-      (kill-buffer compiler-explorer--buffer))
+      (kill-buffer ce--buffer))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring (ring-copy ce--session-ring)))
 
       ;; Session "// test 0" is the oldest
-      (compiler-explorer-previous-session 4)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session 4)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 0") (buffer-string))))
-      (kill-buffer compiler-explorer--buffer))
+      (kill-buffer ce--buffer))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring (ring-copy ce--session-ring)))
 
       ;; Session "// test 3" is the second newest
-      (compiler-explorer-previous-session 1)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session 1)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 3") (buffer-string))))
-      (kill-buffer compiler-explorer--buffer))
+      (kill-buffer ce--buffer))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring
+           (ring-copy ce--session-ring)))
 
       ;; Cycling through all sessions
       (dotimes (i 15)
-        (compiler-explorer-previous-session)
-        (with-current-buffer compiler-explorer--buffer
+        (ce-previous-session)
+        (with-current-buffer ce--buffer
           (should (string= (format "// test %s" (- 4 (mod i 5)))
                            (buffer-string))))))))
 
-(ert-deftest compiler-explorer-discard-session ()
-  (let ((compiler-explorer--session-ring (make-ring 5))
-        (compiler-explorer-new-session-hook nil))
+(ert-deftest ce-discard-session ()
+  (let ((ce--session-ring (make-ring 5))
+        (ce-new-session-hook nil))
     (dotimes (index 5)
-      (compiler-explorer-test--with-session "C++" nil
-        (with-current-buffer compiler-explorer--buffer
+      (ce-test--with-session "C++" nil
+        (with-current-buffer ce--buffer
           (erase-buffer)
           (insert (format "// test %s" index))
           (kill-buffer (current-buffer)))))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring (ring-copy ce--session-ring)))
 
-      (compiler-explorer-discard-session '(0 4))
+      (ce-discard-session '(0 4))
 
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 3") (buffer-string))))
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 2") (buffer-string))))
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string)))))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring
+           (ring-copy ce--session-ring)))
 
-      (compiler-explorer-discard-session '(1 2 4))
+      (ce-discard-session '(1 2 4))
 
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 4") (buffer-string))))
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string)))))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring
+           (ring-copy ce--session-ring)))
 
-      (compiler-explorer-discard-session '(0))
-      (compiler-explorer-discard-session '(0))
-      (compiler-explorer-discard-session '(2))
+      (ce-discard-session '(0))
+      (ce-discard-session '(0))
+      (ce-discard-session '(2))
 
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 2") (buffer-string))))
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string)))))
 
-    (let ((compiler-explorer--session-ring
-           (ring-copy compiler-explorer--session-ring)))
+    (let ((ce--session-ring
+           (ring-copy ce--session-ring)))
 
-      (compiler-explorer-previous-session)
-      (compiler-explorer-discard-session)
-      (compiler-explorer-exit)
+      (ce-previous-session)
+      (ce-discard-session)
+      (ce-exit)
 
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 3") (buffer-string))))
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 2") (buffer-string))))
-      (compiler-explorer-previous-session)
-      (with-current-buffer compiler-explorer--buffer
+      (ce-previous-session)
+      (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string)))))))
 
-(ert-deftest compiler-explorer-restoring-from-shortlink ()
+(ert-deftest ce-restoring-from-shortlink ()
   (let ((url nil)
-        (compiler-explorer-new-session-hook nil))
-    (let ((compiler-explorer--session-ring (make-ring 5)))
-      (compiler-explorer-test--with-session "C++" nil
-        (with-current-buffer compiler-explorer--buffer
+        (ce-new-session-hook nil))
+    (let ((ce--session-ring (make-ring 5)))
+      (ce-test--with-session "C++" nil
+        (with-current-buffer ce--buffer
           (erase-buffer)
           (insert "// source _12345_")
-          (compiler-explorer-set-compiler "x86-64 clang (trunk)")
-          (compiler-explorer-set-compiler-args "-Wall -Wextra")
-          (compiler-explorer-set-execution-args "1 2 3")
-          (compiler-explorer-set-input "test")
-          (compiler-explorer-add-library "boost" "174")
-          (compiler-explorer-add-tool "clangtidytrunk")
-          (compiler-explorer-set-tool-args "clangtidytrunk" "--help")
-          (setq url (compiler-explorer-make-link)))))
+          (ce-set-compiler "x86-64 clang (trunk)")
+          (ce-set-compiler-args "-Wall -Wextra")
+          (ce-set-execution-args "1 2 3")
+          (ce-set-input "test")
+          (ce-add-library "boost" "174")
+          (ce-add-tool "clangtidytrunk")
+          (ce-set-tool-args "clangtidytrunk" "--help")
+          (setq url (ce-make-link)))))
 
-    (compiler-explorer-restore-from-link url)
+    (ce-restore-from-link url)
 
-    (with-current-buffer compiler-explorer--buffer
+    (with-current-buffer ce--buffer
       (should (equal (buffer-string) "// source _12345_"))
-      (should (equal (plist-get compiler-explorer--language-data :name) "C++"))
-      (should (equal (plist-get compiler-explorer--compiler-data :name)
+      (should (equal (plist-get ce--language-data :name) "C++"))
+      (should (equal (plist-get ce--compiler-data :name)
                      "x86-64 clang (trunk)"))
-      (should (equal compiler-explorer--compiler-arguments "-Wall -Wextra"))
-      (should (equal compiler-explorer--execution-arguments "1 2 3"))
-      (should (equal compiler-explorer--execution-input "test"))
-      (should (equal (caar compiler-explorer--selected-libraries) "boost"))
-      (should (equal (cadar compiler-explorer--selected-libraries) "174"))
-      (should (equal (caar compiler-explorer--selected-tools) "clangtidytrunk"))
-      (should (equal (caddar compiler-explorer--selected-tools) "--help"))
-      (should (bufferp (cadar compiler-explorer--selected-tools))))))
+      (should (equal ce--compiler-arguments "-Wall -Wextra"))
+      (should (equal ce--execution-arguments "1 2 3"))
+      (should (equal ce--execution-input "test"))
+      (should (equal (caar ce--selected-libraries) "boost"))
+      (should (equal (cadar ce--selected-libraries) "174"))
+      (should (equal (caar ce--selected-tools) "clangtidytrunk"))
+      (should (equal (caddar ce--selected-tools) "--help"))
+      (should (bufferp (cadar ce--selected-tools))))))
 
-(ert-deftest compiler-explorer-mappings ()
-  (compiler-explorer-test--with-session "C++" nil
-    (with-current-buffer compiler-explorer--buffer
-      (compiler-explorer-set-compiler-args "-O2")
+(ert-deftest ce-mappings ()
+  (ce-test--with-session "C++" nil
+    (with-current-buffer ce--buffer
+      (ce-set-compiler-args "-O2")
       (erase-buffer)
       (insert "
 __attribute__((noinline)) int foo() { asm (\"\"); return 987654321; }
@@ -653,47 +625,46 @@ __attribute__((noinline)) int bar() { asm (\"\"); return -1; }
 }
 ")
 
-      (compiler-explorer-test--wait)
+      (ce-test--wait)
       (goto-char (point-min))
 
       (search-forward "foo")
       (save-current-buffer
-        (compiler-explorer-jump)
-        (should (equal (current-buffer)
-                       (get-buffer compiler-explorer--compiler-buffer)))
+        (ce-jump)
+        (should (equal (current-buffer) (get-buffer ce--compiler-buffer)))
         (should (string-match-p "987654321" (thing-at-point 'line)))
         (forward-line 1)
-        (compiler-explorer-jump)
-        (should (equal (current-buffer)
-                       (get-buffer compiler-explorer--buffer)))
+        (ce-jump)
+        (should (equal (current-buffer) (get-buffer ce--buffer)))
         (should (string-match-p "foo() {" (thing-at-point 'line))))
 
       (search-forward "bar")
       (save-current-buffer
-        (compiler-explorer-jump)
+        (ce-jump)
         (should (string-match-p "-1" (thing-at-point 'line)))
         (forward-line 1)
-        (compiler-explorer-jump)
+        (ce-jump)
         (should (string-match-p "bar() {" (thing-at-point 'line))))
 
       (search-forward "quux")
       (save-current-buffer
         (search-forward "foo")
-        (compiler-explorer-jump)
+        (ce-jump)
         (should (string-match-p "call.*foo" (thing-at-point 'line))))
       (save-current-buffer
         (search-forward "bar")
-        (compiler-explorer-jump)
+        (ce-jump)
         (should (string-match-p "call.*bar" (thing-at-point 'line))))
       (save-current-buffer
         (search-forward "+ c")
-        (compiler-explorer-jump)
+        (ce-jump)
         (should (string-match-p "\\badd\\b\\|\\(\\blea\\b.*987654320\\)"
                                 (thing-at-point 'line)))))))
 
-(provide 'compiler-explorer-test)
-;;; compiler-explorer-test.el ends here
+(provide 'ce-test)
+;;; ce-test.el ends here
 
 ;; Local Variables:
 ;; indent-tabs-mode: nil
+;; read-symbol-shorthands: (("ce-" . "compiler-explorer-"))
 ;; End:

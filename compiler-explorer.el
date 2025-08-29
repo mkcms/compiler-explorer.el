@@ -120,19 +120,19 @@
 
 ;; API
 
-(defvar compiler-explorer-url "https://godbolt.org")
+(defvar ce-url "https://godbolt.org")
 
-(defun compiler-explorer--url (&rest chunks)
+(defun ce--url (&rest chunks)
   "Make compiler explorer API endpoint URL from CHUNKS.
 The last element can be an alist of (FIELD . VALUE) entries.
 This alist will be encoded and appended to the URL as
 URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
   (let (params)
     (when-let* ((last (car (last chunks)))
-               (is-alist (listp last)))
+                (is-alist (listp last)))
       (setq params last chunks (butlast chunks)))
     (concat
-     compiler-explorer-url "/api/" (string-join chunks "/")
+     ce-url "/api/" (string-join chunks "/")
      (when params
        (concat "?" (string-join (mapcar (pcase-lambda (`(,k . ,v))
                                           (concat (url-hexify-string k)
@@ -141,17 +141,17 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
                                         params)
                                 "&"))))))
 
-(defun compiler-explorer--parse-json ()
+(defun ce--parse-json ()
   "Parse buffer as json plist."
   (let ((json-object-type 'plist))
     (json-read)))
 
-(cl-defun compiler-explorer--request-sync
+(cl-defun ce--request-sync
     (what url &rest args
           &key
           (method 'get)
           (headers '(("Accept" . "application/json")))
-          (as #'compiler-explorer--parse-json)
+          (as #'ce--parse-json)
           &allow-other-keys)
   "Perform sync `plz' request for URL, displaying WHAT with progress reporter."
   (let ((pr (make-progress-reporter what)))
@@ -162,27 +162,27 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
                (map-delete args :method))
       (progress-reporter-done pr))))
 
-(defvar compiler-explorer--languages nil)
-(defun compiler-explorer--languages ()
+(defvar ce--languages nil)
+(defun ce--languages ()
   "Get all languages."
-  (or compiler-explorer--languages
-      (setq compiler-explorer--languages
-            (compiler-explorer--request-sync
+  (or ce--languages
+      (setq ce--languages
+            (ce--request-sync
              "Fetching list of languages"
-             (compiler-explorer--url
+             (ce--url
               "languages"
               `(("fields" . ,(string-join '("id" "name" "extensions" "example"
                                             "defaultCompiler")
                                           ","))))))))
 
-(defvar compiler-explorer--compilers nil)
-(defun compiler-explorer--compilers ()
+(defvar ce--compilers nil)
+(defun ce--compilers ()
   "Get all compilers."
-  (or compiler-explorer--compilers
-      (setq compiler-explorer--compilers
-            (compiler-explorer--request-sync
+  (or ce--compilers
+      (setq ce--compilers
+            (ce--request-sync
              "Fetching list of compilers"
-             (compiler-explorer--url
+             (ce--url
               "compilers"
               `(("fields" . ,(string-join '("id" "lang" "name" "groupName"
                                             "instructionSet"
@@ -195,16 +195,16 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
                                             "disabledFilters")
                                           ","))))))))
 
-(defvar compiler-explorer--libraries (make-hash-table :test #'equal))
-(defun compiler-explorer--libraries (id)
+(defvar ce--libraries (make-hash-table :test #'equal))
+(defun ce--libraries (id)
   "Get available libraries for language ID."
-  (or (map-elt compiler-explorer--libraries id)
-      (setf (map-elt compiler-explorer--libraries id)
-            (compiler-explorer--request-sync
+  (or (map-elt ce--libraries id)
+      (setf (map-elt ce--libraries id)
+            (ce--request-sync
              (format "Fetching %S libraries" id)
-             (compiler-explorer--url "libraries" id)))))
+             (ce--url "libraries" id)))))
 
-(defvar compiler-explorer--asm-opcode-docs-cache
+(defvar ce--asm-opcode-docs-cache
   (make-hash-table :test #'equal)
   "Hash table mapping opcodes to their docs.
 
@@ -215,7 +215,7 @@ Values are strings, which contain the documentation for the
 opcode.  Values can also be t, which means no documentation is
 available for the key.")
 
-(defun compiler-explorer--asm-opcode-doc (instruction-set opcode callback)
+(defun ce--asm-opcode-doc (instruction-set opcode callback)
   "Get documentation for OPCODE in INSTRUCTION-SET and call CALLBACK.
 Opcode should be a string.  INSTRUCTION-SET should be a valid
 :instructionSet of some compiler.
@@ -226,33 +226,33 @@ The return value will be:
 - the symbol \\='async if a request to get that documentation was
 sent, but the documentation is not available yet."
   (let* ((key (format "%s:%s" instruction-set opcode))
-         (cache compiler-explorer--asm-opcode-docs-cache)
+         (cache ce--asm-opcode-docs-cache)
          (resp (gethash key cache)))
     (cond
      ((stringp resp) (funcall callback resp) t)
      ((eq resp t) nil)
      (t
       (plz 'get
-        (compiler-explorer--url "asm" instruction-set opcode)
+        (ce--url "asm" instruction-set opcode)
         :headers '(("Accept" . "application/json"))
         :then (pcase-lambda ((map :tooltip))
                 (funcall callback tooltip)
                 (puthash key tooltip cache))
         :else (lambda (_err) (puthash key t cache))
-        :as #'compiler-explorer--parse-json)
+        :as #'ce--parse-json)
       'async))))
 
-(defvar compiler-explorer--examples nil)
-(defun compiler-explorer--examples (&optional lang)
+(defvar ce--examples nil)
+(defun ce--examples (&optional lang)
   "Get an alist of the examples.
 Keys are example names, values are example objects as returned by the API.
 If LANG is non-nil, return only examples for language with that id."
   (let ((examples
-         (or compiler-explorer--examples
-             (setq compiler-explorer--examples
-                   (compiler-explorer--request-sync
+         (or ce--examples
+             (setq ce--examples
+                   (ce--request-sync
                     (format "Fetching %S examples" (or lang "all"))
-                    (concat compiler-explorer-url "/source/builtin/list"))))))
+                    (concat ce-url "/source/builtin/list"))))))
     (remq 'none
           (mapcar
            (lambda (example)
@@ -261,101 +261,101 @@ If LANG is non-nil, return only examples for language with that id."
               (cons (plist-get example :name) example)))
            examples))))
 
-(defvar compiler-explorer--cached-example-data (make-hash-table :test #'equal)
+(defvar ce--cached-example-data (make-hash-table :test #'equal)
   "Keys are strings of the form LANG:EXAMPLE-FILE.
 Values are the example objects from API.")
 
-(defun compiler-explorer--example (lang file)
+(defun ce--example (lang file)
   "Get a single example FILE in LANG."
   (let ((key (format "%s:%s" lang file)))
-    (or (map-elt compiler-explorer--cached-example-data key)
+    (or (map-elt ce--cached-example-data key)
         (setf
-         (map-elt compiler-explorer--cached-example-data key)
-         (compiler-explorer--request-sync
+         (map-elt ce--cached-example-data key)
+         (ce--request-sync
           (format "Fetching %S example %s" lang file)
           (concat
-           compiler-explorer-url "/source/builtin/load/" lang "/" file))))))
+           ce-url "/source/builtin/load/" lang "/" file))))))
 
-(defvar compiler-explorer--tools nil)
-(defun compiler-explorer--tools (lang)
+(defvar ce--tools nil)
+(defun ce--tools (lang)
   "Get a list of tools for given LANG."
-  (if (assoc lang compiler-explorer--tools)
-      (map-elt compiler-explorer--tools lang)
+  (if (assoc lang ce--tools)
+      (map-elt ce--tools lang)
     (setf
-     (map-elt compiler-explorer--tools lang)
+     (map-elt ce--tools lang)
      (seq-map (lambda (elt) (cons (plist-get elt :id) elt))
-              (compiler-explorer--request-sync
+              (ce--request-sync
                (format "Fetching %S tools" (or lang "all"))
-               (compiler-explorer--url "tools" lang))))))
+               (ce--url "tools" lang))))))
 
 
 ;; Compilation
 
-(defconst compiler-explorer--buffer "*compiler-explorer*"
+(defconst ce--buffer "*compiler-explorer*"
   "Buffer with source code.")
 
-(defconst compiler-explorer--compiler-buffer "*compiler-explorer compilation*"
+(defconst ce--compiler-buffer "*compiler-explorer compilation*"
   "Buffer with ASM code.")
 
-(defconst compiler-explorer--output-buffer "*compiler-explorer output*"
+(defconst ce--output-buffer "*compiler-explorer output*"
   "Combined compiler stdout&stderr.")
 
-(defconst compiler-explorer--exe-output-buffer
+(defconst ce--exe-output-buffer
   "*compiler-explorer execution output*"
   "Buffer with execution output.")
 
-(defconst compiler-explorer--tool-buffer-format "*compiler-explorer tool %s*"
+(defconst ce--tool-buffer-format "*compiler-explorer tool %s*"
   "Template for tool buffer names.")
 
-(defvar compiler-explorer--language-data nil
+(defvar ce--language-data nil
   "Language data for current session.")
 
-(defvar compiler-explorer--compiler-data nil
+(defvar ce--compiler-data nil
   "Compiler data for current session.")
 
-(defvar compiler-explorer--selected-libraries nil
+(defvar ce--selected-libraries nil
   "Alist of libraries for current session.
 Keys are library ids, values are lists (VERSION ENTRY), where
 VERSION is the id string of the version and ENTRY is the library
 entry from function `compiler-explorer--libraries'.")
 
-(defvar compiler-explorer--selected-tools nil
+(defvar ce--selected-tools nil
   "Alist of tools for current session.
 Keys are tool ids, and values are lists (BUFFER ARGS STDIN), where
 BUFFER is the tool's buffer, ARGS is a string with the arguments, and
 STDIN is a string.")
 
-(defvar compiler-explorer--compiler-arguments ""
+(defvar ce--compiler-arguments ""
   "Arguments for the compiler.")
 
-(defvar compiler-explorer--execution-arguments ""
+(defvar ce--execution-arguments ""
   "Arguments for the program executed.")
 
-(defvar compiler-explorer--execution-input ""
+(defvar ce--execution-input ""
   "Stdin for the program executed.")
 
-(defvar compiler-explorer--last-compilation-request nil
+(defvar ce--last-compilation-request nil
   "Last request (response) for current compilation.")
 
-(defvar compiler-explorer--last-exe-request nil
+(defvar ce--last-exe-request nil
   "Last request (response) for current execution.")
 
-(defvar compiler-explorer-response-limit-bytes (* 1000 1000)
+(defvar ce-response-limit-bytes (* 1000 1000)
   "Limit in bytes for responses to compilation requests.
 If a compilation response is larger than this, it is not parsed
 with `json-parse', and a message is displayed.")
 
-(defun compiler-explorer--parse-json-compilation ()
+(defun ce--parse-json-compilation ()
   "Parse current buffer as json, but only if it's size is reasonable."
   (cond
-   ((< (buffer-size) compiler-explorer-response-limit-bytes)
-    (compiler-explorer--parse-json))
+   ((< (buffer-size) ce-response-limit-bytes)
+    (ce--parse-json))
    (t
     (let ((msg `[(:text
                   ,(format
                     "ERROR: Response too large to parse. (%s kB, limit %s kB)"
                     (/ (buffer-size) 1000)
-                    (/ compiler-explorer-response-limit-bytes 1000)))
+                    (/ ce-response-limit-bytes 1000)))
                  (:text "Increase the limit by setting ")
                  (:text "`compiler-explorer-response-limit-bytes'")]))
       `(:asm ,msg
@@ -363,18 +363,18 @@ with `json-parse', and a message is displayed.")
              :code -1
              :tools ,(mapcar
                       (lambda (id) `(:id ,id :stderr ,msg))
-                      (mapcar #'car compiler-explorer--selected-tools)))))))
+                      (mapcar #'car ce--selected-tools)))))))
 
-(defcustom compiler-explorer-output-filters '(:binary nil
-                                                      :binaryObject nil
-                                                      :commentOnly t
-                                                      :demangle t
-                                                      :directives t
-                                                      :intel t
-                                                      :labels t
-                                                      :libraryCode t
-                                                      :trim nil
-                                                      :debugCalls nil)
+(defcustom ce-output-filters '(:binary nil
+                                       :binaryObject nil
+                                       :commentOnly t
+                                       :demangle t
+                                       :directives t
+                                       :intel t
+                                       :labels t
+                                       :libraryCode t
+                                       :trim nil
+                                       :debugCalls nil)
   "Compiler output filters."
   :type '(plist :key-type
                 (choice
@@ -390,13 +390,13 @@ with `json-parse', and a message is displayed.")
                  (const :tag "Debug intrinsics" :debugCalls))
                 :value-type boolean))
 
-(defun compiler-explorer--filter-enabled-p (filter)
+(defun ce--filter-enabled-p (filter)
   "Return non-nil if FILTER can be used in the current session."
   (pcase-let (((map :supportsBinary :supportsBinaryObject
                     :supportsLibraryCodeFilter :supportsDemangle
                     :supportsIntel
                     :disabledFilters)
-               compiler-explorer--compiler-data))
+               ce--compiler-data))
     (and (cl-case filter
            (:binary (eq t supportsBinary))
            (:binaryObject (eq t supportsBinaryObject))
@@ -407,29 +407,29 @@ with `json-parse', and a message is displayed.")
          (not (seq-contains-p disabledFilters
                               (substring (symbol-name filter) 1))))))
 
-(defun compiler-explorer--output-filters ()
+(defun ce--output-filters ()
   "Get output filters options in a form suitable for making a request."
-  (cl-loop for (k v) on compiler-explorer-output-filters by #'cddr
-           if (compiler-explorer--filter-enabled-p k)
+  (cl-loop for (k v) on ce-output-filters by #'cddr
+           if (ce--filter-enabled-p k)
            nconc (list k (or v :json-false))))
 
-(defvar compiler-explorer--inhibit-request nil
+(defvar ce--inhibit-request nil
   "If non-nil, inhibit making the async compilation/execution request.
 This can be temporarily let-bound to defer making async requests
 when multiple functions try to do it in a block of code.")
 
-(defun compiler-explorer--request-async-1 ()
+(defun ce--request-async-1 ()
   "Subr of `compiler-explorer--request-async'."
   (pcase-dolist
       (`(,executorRequest ,symbol ,handler)
        `((:json-false
-          compiler-explorer--last-compilation-request
-          compiler-explorer--handle-compilation-response)
-         ,@(when (eq t (plist-get compiler-explorer--compiler-data
+          ce--last-compilation-request
+          ce--handle-compilation-response)
+         ,@(when (eq t (plist-get ce--compiler-data
                                   :supportsExecute))
              '((t
-                compiler-explorer--last-exe-request
-                compiler-explorer--handle-execution-response)))))
+                ce--last-exe-request
+                ce--handle-execution-response)))))
     (when-let* ((last (symbol-value symbol)))
       ;; Abort last request
       (when (process-live-p last)
@@ -439,8 +439,8 @@ when multiple functions try to do it in a block of code.")
        proc
        (set symbol
             (plz 'post
-              (compiler-explorer--url
-               "compiler" (plist-get compiler-explorer--compiler-data :id)
+              (ce--url
+               "compiler" (plist-get ce--compiler-data :id)
                "compile")
               :headers '(("Accept" . "application/json")
                          ("Content-Type" . "application/json"))
@@ -448,20 +448,20 @@ when multiple functions try to do it in a block of code.")
                       (json-encode
                        `(
                          :source
-                         ,(with-current-buffer compiler-explorer--buffer
+                         ,(with-current-buffer ce--buffer
                             (buffer-string))
                          :options
                          (
-                          :userArguments ,compiler-explorer--compiler-arguments
+                          :userArguments ,ce--compiler-arguments
                           :executeParameters
                           (
-                           :args ,compiler-explorer--execution-arguments
-                           :stdin ,compiler-explorer--execution-input)
+                           :args ,ce--execution-arguments
+                           :stdin ,ce--execution-input)
                           :compilerOptions
                           (
                            :skipAsm :json-false
                            :executorRequest ,executorRequest)
-                          :filters ,(compiler-explorer--output-filters)
+                          :filters ,(ce--output-filters)
                           :tools
                           [,@(mapcar
                               (pcase-lambda (`(,id ,_ ,args ,stdin))
@@ -470,37 +470,37 @@ when multiple functions try to do it in a block of code.")
                                               (split-string-and-unquote args)
                                               'vector)
                                       :stdin ,stdin))
-                              compiler-explorer--selected-tools)]
+                              ce--selected-tools)]
                           :libraries
                           [,@(mapcar
                               (pcase-lambda (`(,id ,version ,_))
                                 `(:id ,id :version ,version))
-                              compiler-explorer--selected-libraries)])
+                              ce--selected-libraries)])
                          :allowStoreCodeDebug :json-false)))
-              :as #'compiler-explorer--parse-json-compilation
+              :as #'ce--parse-json-compilation
               :then (lambda (resp)
                       (unless (plz-error-p resp)
                         (funcall handler resp)
-                        (process-put proc 'compiler-explorer-response-data
+                        (process-put proc 'ce-response-data
                                      resp))))))))
-  (unless (eq t (plist-get compiler-explorer--compiler-data :supportsExecute))
-    (setq compiler-explorer--last-exe-request nil)
-    (compiler-explorer--handle-compiler-with-no-execution))
-  (compiler-explorer--build-overlays nil)
+  (unless (eq t (plist-get ce--compiler-data :supportsExecute))
+    (setq ce--last-exe-request nil)
+    (ce--handle-compiler-with-no-execution))
+  (ce--build-overlays nil)
   (force-mode-line-update))
 
-(defun compiler-explorer--request-async ()
+(defun ce--request-async ()
   "Queue compilation and execution and return immediately.
 This calls `compiler-explorer--handle-compilation-response' and
 `compiler-explorer--handle-execution-response' once the responses arrive."
-  (unless compiler-explorer--inhibit-request
-    (compiler-explorer--request-async-1)))
+  (unless ce--inhibit-request
+    (ce--request-async-1)))
 
-(defvar compiler-explorer--project-dir)
+(defvar ce--project-dir)
 
 ;; TODO: Instead, we can allow the user to provide the user the option to
 ;; provide MAX-SECS and MAX-COSTS arguments to `replace-region-contents'.
-(defcustom compiler-explorer-replace-insert-nondestructively 25000
+(defcustom ce-replace-insert-nondestructively 25000
   "Replace buffer contents nondestructively if it's size is less than this.
 
 When handling compilation response, the disassembled code is
@@ -516,9 +516,9 @@ If the size of any of the two buffers is larger than this, the
 contents are replaced destructively and point is not preserved."
   :type 'integer)
 
-(defun compiler-explorer--replace-buffer-contents (target source)
+(defun ce--replace-buffer-contents (target source)
   "Replace contents of buffer TARGET with SOURCE."
-  (let ((limit compiler-explorer-replace-insert-nondestructively))
+  (let ((limit ce-replace-insert-nondestructively))
     (with-current-buffer target
       (let ((inhibit-read-only t))
         ;; We need to remove all overlays applied by ansi-color first,
@@ -534,30 +534,30 @@ contents are replaced destructively and point is not preserved."
           (erase-buffer)
           (insert-buffer-substring source))))))
 
-(defvar compiler-explorer-document-opcodes)
-(defvar compiler-explorer-source-to-asm-mappings)
-(defun compiler-explorer--handle-compilation-response (response)
+(defvar ce-document-opcodes)
+(defvar ce-source-to-asm-mappings)
+(defun ce--handle-compilation-response (response)
   "Handle compilation response contained in RESPONSE."
   (pcase-let (((map :asm :stdout :stderr :code :tools) response)
-              (compiler (get-buffer compiler-explorer--compiler-buffer))
-              (output (get-buffer compiler-explorer--output-buffer))
+              (compiler (get-buffer ce--compiler-buffer))
+              (output (get-buffer ce--output-buffer))
               (source-to-asm-mappings nil))
     (with-current-buffer compiler
       (with-temp-buffer
         (seq-do
          (pcase-lambda ((map :text (:source (and source (map :line :file)))))
            (let (mapping)
-             (when (and compiler-explorer-source-to-asm-mappings line
+             (when (and ce-source-to-asm-mappings line
                         (plist-member source :file) (null file) (> line 0))
                (if (setq mapping (assq line source-to-asm-mappings))
                    (push (point) (cdr mapping))
                  (push (cons line (list (point))) source-to-asm-mappings))))
            (insert text "\n"))
          asm)
-        (compiler-explorer--replace-buffer-contents compiler (current-buffer)))
+        (ce--replace-buffer-contents compiler (current-buffer)))
 
-      (when compiler-explorer-source-to-asm-mappings
-        (compiler-explorer--build-overlays source-to-asm-mappings)))
+      (when ce-source-to-asm-mappings
+        (ce--build-overlays source-to-asm-mappings)))
 
     ;; Update output buffer
     (with-current-buffer output
@@ -569,7 +569,7 @@ contents are replaced destructively and point is not preserved."
                            stderr "\n")
                 "\n")
         (insert (format "Compiler exited with code %s" code))
-        (compiler-explorer--replace-buffer-contents output (current-buffer)))
+        (ce--replace-buffer-contents output (current-buffer)))
       (let ((inhibit-read-only t))
         (ansi-color-apply-on-region (point-min) (point-max)))
 
@@ -580,24 +580,24 @@ contents are replaced destructively and point is not preserved."
     ;; Update tools
     (pcase-dolist ((map :id :stderr :stdout) (seq-into tools 'list))
       (when-let* ((toolbuf
-                   (cadr (assoc id compiler-explorer--selected-tools))))
+                   (cadr (assoc id ce--selected-tools))))
         (with-temp-buffer
           (seq-do (pcase-lambda ((map :text)) (insert text "\n"))
                   (seq-concatenate 'list stdout stderr))
-          (compiler-explorer--replace-buffer-contents toolbuf
-                                                      (current-buffer))))))
+          (ce--replace-buffer-contents toolbuf
+                                       (current-buffer))))))
   (force-mode-line-update t))
 
-(defun compiler-explorer--handle-compiler-with-no-execution ()
+(defun ce--handle-compiler-with-no-execution ()
   "Update the execution output buffer with info about unsupported compiler.
 This will write the list of supported compilers in the execution
 output buffer."
-  (with-current-buffer compiler-explorer--exe-output-buffer
+  (with-current-buffer ce--exe-output-buffer
     (let ((inhibit-read-only t)
           (keymap (make-keymap))
-          (compiler (plist-get compiler-explorer--compiler-data :name))
-          (lang-id (plist-get compiler-explorer--language-data :id)))
-      (define-key keymap [mouse-1] 'compiler-explorer-set-compiler)
+          (compiler (plist-get ce--compiler-data :name))
+          (lang-id (plist-get ce--language-data :id)))
+      (define-key keymap [mouse-1] 'ce-set-compiler)
       (erase-buffer)
       (save-excursion
         (insert (format "Error: The %s compiler does not support execution."
@@ -611,18 +611,18 @@ output buffer."
            (when (and (eq t supportsExecute) (string= lang lang-id))
              (insert " "
                      (propertize name
-                                 'compiler-explorer-compiler-id id
+                                 'ce-compiler-id id
                                  'face 'link
                                  'mouse-face 'highlight
                                  'keymap keymap
                                  'help-echo "Click to set")
                      "\n")))
-         (compiler-explorer--compilers))))))
+         (ce--compilers))))))
 
-(defun compiler-explorer--handle-execution-response (response)
+(defun ce--handle-execution-response (response)
   "Handle execution response contained in RESPONSE."
   (pcase-let (((map :stdout :stderr :code) response))
-    (with-current-buffer compiler-explorer--exe-output-buffer
+    (with-current-buffer ce--exe-output-buffer
       (let ((inhibit-read-only t)
             (buf (current-buffer)))
         (with-temp-buffer
@@ -635,32 +635,29 @@ output buffer."
                              stderr "\n")
                   "\n")
           (insert (format "Program exited with code %s" code))
-          (compiler-explorer--replace-buffer-contents buf (current-buffer)))
+          (ce--replace-buffer-contents buf (current-buffer)))
         (ansi-color-apply-on-region (point-min) (point-max))))))
 
 
 ;; UI
 
-(defvar compiler-explorer--recompile-timer)
+(defvar ce--recompile-timer)
 
-(defun compiler-explorer--header-line-format-common ()
+(defun ce--header-line-format-common ()
   "Get the mode line template used in compiler explorer mode."
   (let* ((is-exe (eq (current-buffer)
-                     (get-buffer compiler-explorer--exe-output-buffer)))
-         (resp (if is-exe
-                   compiler-explorer--last-exe-request
-                 compiler-explorer--last-compilation-request)))
+                     (get-buffer ce--exe-output-buffer)))
+         (resp (if is-exe ce--last-exe-request ce--last-compilation-request)))
     (propertize
      (concat "CE: "
              (cond
               ((and (null resp) is-exe
                     (eq :json-false
-                        (plist-get compiler-explorer--compiler-data
-                                   :supportsExecute)))
+                        (plist-get ce--compiler-data :supportsExecute)))
                (propertize "ERROR" 'face 'error))
               ((null resp) "")
               ((or (process-live-p resp)
-                   (member compiler-explorer--recompile-timer timer-list))
+                   (member ce--recompile-timer timer-list))
                "Wait...")
               ((/= 0 (process-exit-status resp))
                (propertize "ERROR" 'face 'error
@@ -671,15 +668,14 @@ output buffer."
               (t
                (pcase-let (((map :stdout :stderr)
                             (process-get resp
-                                         'compiler-explorer-response-data)))
+                                         'ce-response-data)))
                  (propertize
                   (format "%s (%s/%s)"
                           (propertize "Done" 'face 'success)
                           (length stdout)
                           (propertize (format "%s" (length stderr))
                                       'face (if (> (length stderr) 0) 'error)))
-                  'help-echo (with-current-buffer
-                                 compiler-explorer--output-buffer
+                  'help-echo (with-current-buffer ce--output-buffer
                                ;; Get at most 30 output lines
                                (save-excursion
                                  (goto-char (point-min))
@@ -696,73 +692,64 @@ output buffer."
                                   " Show output buffer."))))))))
      'mouse-face 'mode-line-highlight
      'keymap (let ((map (make-keymap)))
-               (define-key map [header-line mouse-1]
-                 #'compiler-explorer-show-output)
+               (define-key map [header-line mouse-1] #'ce-show-output)
                map))))
 
-(defvar compiler-explorer--last-layout)
-(defvar compiler-explorer-layouts)
+(defvar ce--last-layout)
+(defvar ce-layouts)
 
-(defun compiler-explorer--header-line-format-source ()
+(defun ce--header-line-format-source ()
   "Get mode line construct for displaying header line in source buffer."
   `(
-    (:eval (compiler-explorer--header-line-format-common))
+    (:eval (ce--header-line-format-common))
     " | "
     ,(propertize
-      (plist-get compiler-explorer--language-data :name)
+      (plist-get ce--language-data :name)
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1]
-                            #'compiler-explorer-new-session)
-                (define-key map [header-line mouse-2]
-                            #'compiler-explorer-previous-session)
+                (define-key map [header-line mouse-1] #'ce-new-session)
+                (define-key map [header-line mouse-2] #'ce-previous-session)
                 map)
       'help-echo (concat "mouse-1: New session\n"
                          "mouse-2: Previous session"))
     " | "
     ,(propertize
-      (format "Layout: %d" compiler-explorer--last-layout)
+      (format "Layout: %d" ce--last-layout)
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
                 (define-key map [header-line mouse-1]
                             (lambda ()
                               (interactive)
-                              (compiler-explorer-layout
-                               (1+ compiler-explorer--last-layout))))
+                              (ce-layout (1+ ce--last-layout))))
                 (define-key map [header-line mouse-2]
                             (lambda ()
                               (interactive)
-                              (compiler-explorer-layout
-                               (if (zerop compiler-explorer--last-layout)
-                                   (1- (length compiler-explorer-layouts))
-                                 (1- compiler-explorer--last-layout)))))
+                              (ce-layout (if (zerop ce--last-layout)
+                                             (1- (length ce-layouts))
+                                           (1- ce--last-layout)))))
                 map)
       'help-echo (concat "mouse-1: Next layout\n"
-                         "mouse-2: Previous layout"))
-    ))
+                         "mouse-2: Previous layout"))))
 
-(defun compiler-explorer--header-line-format-compiler ()
+(defun ce--header-line-format-compiler ()
   "Get mode line construct for displaying header line in compilation buffers."
   `(
-    (:eval (compiler-explorer--header-line-format-common))
+    (:eval (ce--header-line-format-common))
     " | "
     ,(propertize
-      (plist-get compiler-explorer--compiler-data :name)
+      (plist-get ce--compiler-data :name)
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1]
-                  #'compiler-explorer-set-compiler)
+                (define-key map [header-line mouse-1] #'ce-set-compiler)
                 map)
       'help-echo "mouse-1: Select compiler")
     " | "
     ,(propertize
-      (format "Libs: %s"  (length compiler-explorer--selected-libraries))
+      (format "Libs: %s"  (length ce--selected-libraries))
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1]
-                            #'compiler-explorer-add-library)
-                (define-key map [header-line mouse-2]
-                            #'compiler-explorer-remove-library)
+                (define-key map [header-line mouse-1] #'ce-add-library)
+                (define-key map [header-line mouse-2] #'ce-remove-library)
                 map)
       'help-echo (concat
                   "Libraries:\n"
@@ -773,137 +760,127 @@ output buffer."
                                       for id = (plist-get version :id)
                                       when (string= id vid)
                                       return (plist-get version :version))))
-                   compiler-explorer--selected-libraries
+                   ce--selected-libraries
                    "\n")
                   "\n\n"
                   "mouse-1: Add library\n"
                   "mouse-2: Remove library\n"))
     " | "
-    ,(propertize (format "Args: '%s'" compiler-explorer--compiler-arguments)
+    ,(propertize (format "Args: '%s'" ce--compiler-arguments)
                  'mouse-face 'header-line-highlight
                  'keymap (let ((map (make-keymap)))
                            (define-key map [header-line mouse-1]
-                             #'compiler-explorer-set-compiler-args)
+                                       #'ce-set-compiler-args)
                            map)
                  'help-echo "mouse-1: Set arguments")))
 
-(defun compiler-explorer--header-line-format-executor ()
+(defun ce--header-line-format-executor ()
   "Get mode line construct for displaying header line in execution buffers."
   `(
-    (:eval (compiler-explorer--header-line-format-common))
+    (:eval (ce--header-line-format-common))
     " | "
     ,(propertize
-      (format "Input: %s chars" (length compiler-explorer--execution-input))
+      (format "Input: %s chars" (length ce--execution-input))
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1]
-                  #'compiler-explorer-set-input)
+                (define-key map [header-line mouse-1] #'ce-set-input)
                 map)
       'help-echo "mouse-1: Set program input")
     " | "
     ,(propertize
-      (format "Args: '%s'" compiler-explorer--execution-arguments)
+      (format "Args: '%s'" ce--execution-arguments)
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1]
-                  #'compiler-explorer-set-execution-args)
+                (define-key map [header-line mouse-1] #'ce-set-execution-args)
                 map)
       'help-echo "mouse-1: Set program arguments")))
 
-(defvar compiler-explorer--tool-context)
+(defvar ce--tool-context)
 
-(defun compiler-explorer--header-line-format-tool ()
+(defun ce--header-line-format-tool ()
   "Get mode line construct for displaying header line in tool buffers."
   `(
-    (:eval (compiler-explorer--header-line-format-common))
+    (:eval (ce--header-line-format-common))
     " | "
     ,(propertize
-      (format "Tool: %s" (compiler-explorer--tool-id))
+      (format "Tool: %s" (ce--tool-id))
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap))
-                    (id (compiler-explorer--tool-id)))
+                    (id (ce--tool-id)))
                 (define-key map [header-line mouse-1]
                             (lambda ()
                               (interactive)
-                              (compiler-explorer-remove-tool id)))
+                              (ce-remove-tool id)))
                 map)
       'help-echo "mouse-1: Remove this tool")
     " | "
     ,(propertize
       (format "Args: '%s'"
-              (caddr (assoc (compiler-explorer--tool-id)
-                            compiler-explorer--selected-tools)))
+              (caddr (assoc (ce--tool-id)
+                            ce--selected-tools)))
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap))
-                    (id (compiler-explorer--tool-id)))
+                    (id (ce--tool-id)))
                 (define-key
                  map [header-line mouse-1]
                  (lambda ()
                    (interactive)
-                   (let ((compiler-explorer--tool-context id))
-                     (call-interactively #'compiler-explorer-set-tool-args))))
+                   (let ((ce--tool-context id))
+                     (call-interactively #'ce-set-tool-args))))
                 map)
       'help-echo "mouse-1: Set program arguments")
     " | "
     ,(propertize
       (format "Input: %s chars"
-              (length (cadddr (assoc (compiler-explorer--tool-id)
-                                     compiler-explorer--selected-tools))))
+              (length (cadddr (assoc (ce--tool-id) ce--selected-tools))))
       'mouse-face 'header-line-highlight
       'keymap (let ((map (make-keymap))
-                    (id (compiler-explorer--tool-id)))
+                    (id (ce--tool-id)))
                 (define-key
                  map [header-line mouse-1]
                  (lambda ()
                    (interactive)
-                   (let ((compiler-explorer--tool-context id))
-                     (call-interactively #'compiler-explorer-set-tool-input))))
+                   (let ((ce--tool-context id))
+                     (call-interactively #'ce-set-tool-input))))
                 map)
       'help-echo "mouse-1: Set tool input")))
 
-(defvar compiler-explorer-mode-map)
+(defvar ce-mode-map)
 
-(defun compiler-explorer--define-menu ()
+(defun ce--define-menu ()
   "Define a menu in the menu bar for `compiler-explorer' commands."
-  (easy-menu-define compiler-explorer-menu
-    compiler-explorer-mode-map "Compiler Explorer"
+  (easy-menu-define ce-menu
+    ce-mode-map "Compiler Explorer"
     `("Compiler Explorer"
-      ["Previous session" compiler-explorer-previous-session]
+      ["Previous session" ce-previous-session]
       ("Restore session"
-       :enable (not (seq-empty-p (compiler-explorer--session-alist)))
+       :enable (not (seq-empty-p (ce--session-alist)))
        ,@(mapcar (pcase-lambda (`(,string ,_ ,index))
                    (vector string
                            (lambda ()
                              (interactive)
-                             (compiler-explorer-previous-session index))))
-                 (compiler-explorer--session-alist)))
+                             (ce-previous-session index))))
+                 (ce--session-alist)))
       ("New session"
        ,@(mapcar
           (pcase-lambda ((map :name))
             (vector name (lambda ()
                            (interactive)
-                           (compiler-explorer-new-session name t))))
+                           (ce-new-session name t))))
           (seq-sort-by (lambda (lang) (plist-get lang :name))
-                       #'string<
-                       (compiler-explorer--languages))))
+                       #'string< (ce--languages))))
       ("Load example"
        ,@(mapcar
           (lambda (name)
-            (vector name (lambda ()
-                           (interactive)
-                           (compiler-explorer-load-example name))))
-          (mapcar #'car
-                  (compiler-explorer--examples
-                   (plist-get compiler-explorer--language-data :id)))))
+            (vector name (lambda () (interactive) (ce-load-example name))))
+          (mapcar #'car (ce--examples (plist-get ce--language-data :id)))))
       "--"
       ("Compiler"
        ,@(let ((compilers
                 (cl-remove-if
                  (pcase-lambda ((map :lang))
-                   (not
-                    (string= lang (plist-get
-                                   compiler-explorer--language-data :id))))
-                 (compiler-explorer--compilers)))
+                   (not (string= lang (plist-get ce--language-data :id))))
+                 (ce--compilers)))
                (by-group (make-hash-table :test #'equal)))
            (cl-loop for compiler across compilers
                     for name = (plist-get compiler :name)
@@ -911,7 +888,6 @@ output buffer."
                     for group = (map-elt by-group group-name)
                     if group do (nconc group (list name))
                     else do (setf (map-elt by-group group-name) (list name)))
-
            (seq-sort-by
             #'car #'string<
             (map-apply
@@ -922,32 +898,29 @@ output buffer."
                           (vector name
                                   (lambda ()
                                     (interactive)
-                                    (compiler-explorer-set-compiler name))))
+                                    (ce-set-compiler name))))
                         compilers-in-group)))
              by-group))))
-      ["Set compilation arguments" compiler-explorer-set-compiler-args]
+      ["Set compilation arguments" ce-set-compiler-args]
       ("Add library"
        :enable (not
                 (seq-empty-p
-                 (compiler-explorer--libraries
-                  (plist-get compiler-explorer--language-data :id))))
+                 (ce--libraries (plist-get ce--language-data :id))))
        ,@(mapcar
           (pcase-lambda ((map :name :id :versions))
             (cl-list*
              name
-             :enable `(null (assoc ,id compiler-explorer--selected-libraries))
+             :enable `(null (assoc ,id ce--selected-libraries))
              (mapcar
               (pcase-lambda ((map :version (:id version-id)))
                 (vector
                  (format "%s %s" name version)
-                 (lambda ()
-                   (interactive)
-                   (compiler-explorer-add-library id version-id))))
+                 (lambda () (interactive) (ce-add-library id version-id))))
               versions)))
-          (compiler-explorer--libraries
-           (plist-get compiler-explorer--language-data :id))))
+          (ce--libraries
+           (plist-get ce--language-data :id))))
       ("Remove library"
-       :enable (not (null compiler-explorer--selected-libraries))
+       :enable (not (null ce--selected-libraries))
        ,@(mapcar
           (pcase-lambda (`(,library-id ,version-id ,(map :name :versions)))
             (vector (format "%s %s"
@@ -956,130 +929,115 @@ output buffer."
                                      for id = (plist-get version :id)
                                      when (string= id version-id)
                                      return (plist-get version :version)))
-                    (lambda ()
-                      (interactive)
-                      (compiler-explorer-remove-library library-id))))
-          compiler-explorer--selected-libraries))
+                    (lambda () (interactive) (ce-remove-library library-id))))
+          ce--selected-libraries))
       "--"
       ("Add tool"
-       :enable (not
-                (seq-empty-p
-                 (compiler-explorer--tools
-                  (plist-get compiler-explorer--language-data :id))))
+       :enable
+       (not (seq-empty-p (ce--tools (plist-get ce--language-data :id))))
        ,@(mapcar
           (pcase-lambda (`(,id . ,_))
             (vector id
                     (lambda ()
                       (interactive)
-                      (compiler-explorer-add-tool id))
+                      (ce-add-tool id))
                     :enable
-                    `(null (assoc ,id compiler-explorer--selected-tools))))
-          (compiler-explorer--tools
-           (plist-get compiler-explorer--language-data :id))))
+                    `(null (assoc ,id ce--selected-tools))))
+          (ce--tools (plist-get ce--language-data :id))))
       ("Remove tool"
-       :enable (not (null compiler-explorer--selected-tools))
+       :enable (not (null ce--selected-tools))
        ,@(mapcar
           (lambda (id)
-            (vector id
-                    (lambda ()
-                      (interactive)
-                      (compiler-explorer-remove-tool id))))
-          (mapcar #'car compiler-explorer--selected-tools)))
+            (vector id (lambda () (interactive) (ce-remove-tool id))))
+          (mapcar #'car ce--selected-tools)))
       ("Set tool arguments"
-       :enable (not (null compiler-explorer--selected-tools))
+       :enable (not (null ce--selected-tools))
        ,@(mapcar
           (lambda (id)
             (vector
              id
              (lambda ()
                (interactive)
-               (let ((compiler-explorer--tool-context id))
-                 (call-interactively #'compiler-explorer-set-tool-args)))))
-          (mapcar #'car compiler-explorer--selected-tools)))
+               (let ((ce--tool-context id))
+                 (call-interactively #'ce-set-tool-args)))))
+          (mapcar #'car ce--selected-tools)))
       ("Set tool input"
-       :enable (not (null compiler-explorer--selected-tools))
+       :enable (not (null ce--selected-tools))
        ,@(mapcar
-          (lambda (id)
-            (vector
-             id
-             (lambda ()
-               (interactive)
-               (let ((compiler-explorer--tool-context id))
-                 (call-interactively #'compiler-explorer-set-tool-input)))))
-          (mapcar #'car compiler-explorer--selected-tools)))
+          (lambda (id) (vector id
+                               (lambda ()
+                                 (interactive)
+                                 (let ((ce--tool-context id))
+                                   (call-interactively #'ce-set-tool-input)))))
+          (mapcar #'car ce--selected-tools)))
       "--"
-      ["Set execution arguments" compiler-explorer-set-execution-args]
-      ["Set execution input" compiler-explorer-set-input]
+      ["Set execution arguments" ce-set-execution-args]
+      ["Set execution input" ce-set-input]
       "--"
       ("Output filters"
        ,@(cl-loop
-          for (key v) on compiler-explorer-output-filters by #'cddr
-          for is-enabled = (compiler-explorer--filter-enabled-p key)
+          for (key v) on ce-output-filters by #'cddr
+          for is-enabled = (ce--filter-enabled-p key)
           with name-alist =
           (cl-loop for elt in
-                   (cdaddr
-                    (get 'compiler-explorer-output-filters 'custom-type))
+                   (cdaddr (get 'ce-output-filters 'custom-type))
                    collect (cons (car (last elt)) (car (last elt 2))))
           collect (vector (or (cdr (assoc key name-alist)))
                           `(lambda ()
                              (interactive)
-                             (setq compiler-explorer-output-filters
-                                   (plist-put compiler-explorer-output-filters
-                                              ,key (not ,v)))
-                             (compiler-explorer--request-async)
-                             (compiler-explorer--define-menu))
+                             (setq ce-output-filters
+                                   (plist-put ce-output-filters ,key (not ,v)))
+                             (ce--request-async)
+                             (ce--define-menu))
                           :style 'toggle
                           :selected v
                           :enable is-enabled)))
       ["Source to ASM mappings"
        (lambda ()
          (interactive)
-         (setq compiler-explorer-source-to-asm-mappings
-               (not compiler-explorer-source-to-asm-mappings))
-         (compiler-explorer--request-async))
-       :style toggle :selected compiler-explorer-source-to-asm-mappings]
-      ["Next layout" compiler-explorer-layout]
-      ["Copy link to this session" compiler-explorer-make-link]
+         (setq ce-source-to-asm-mappings (not ce-source-to-asm-mappings))
+         (ce--request-async))
+       :style toggle :selected ce-source-to-asm-mappings]
+      ["Next layout" ce-layout]
+      ["Copy link to this session" ce-make-link]
       "--"
-      ["Exit" compiler-explorer-exit])))
+      ["Exit" ce-exit])))
 
 
 ;; Other internal functions
 
-(defvar compiler-explorer--session-ring)
-(defvar compiler-explorer-mode)
-(defvar compiler-explorer--recompile-timer)
-(defvar compiler-explorer--cleaning-up nil)
+(defvar ce--session-ring)
+(defvar ce-mode)
+(defvar ce--recompile-timer)
+(defvar ce--cleaning-up nil)
 
-(defun compiler-explorer--tool-id ()
+(defun ce--tool-id ()
   "Get the ID of the tool in the current buffer, or return nil."
-  (car
-   (cl-find (current-buffer) compiler-explorer--selected-tools :key #'cadr)))
+  (car (cl-find (current-buffer) ce--selected-tools :key #'cadr)))
 
-(defun compiler-explorer--window-layout (&optional window)
+(defun ce--window-layout (&optional window)
   "Get the window layout of WINDOW, suitable for `compiler-explorer-layout'.
 WINDOW if nil defaults to the frame's root window."
   (or window (setq window (frame-root-window)))
   (cond
    ((window-live-p window)
     (pcase (window-buffer window)
-      ((pred (eq (get-buffer compiler-explorer--buffer)))
+      ((pred (eq (get-buffer ce--buffer)))
        'source)
-      ((pred (eq (get-buffer compiler-explorer--compiler-buffer)))
+      ((pred (eq (get-buffer ce--compiler-buffer)))
        'asm)
-      ((pred (eq (get-buffer compiler-explorer--output-buffer)))
+      ((pred (eq (get-buffer ce--output-buffer)))
        'output)
-      ((pred (eq (get-buffer compiler-explorer--exe-output-buffer)))
+      ((pred (eq (get-buffer ce--exe-output-buffer)))
        'exe)
-      ((pred (lambda (buf)
-               (memq buf (mapcar #'cadr compiler-explorer--selected-tools))))
+      ((pred (lambda (buf) (memq buf (mapcar #'cadr ce--selected-tools))))
        'tool)))
    ((window-left-child window)
     (cl-loop
      with child = (window-left-child window)
      with ret = nil
      while child
-     for layout = (compiler-explorer--window-layout child)
+     for layout = (ce--window-layout child)
      do (setq ret (if ret (cons ret layout) layout)
               child (window-next-sibling child))
      finally return ret))
@@ -1088,41 +1046,39 @@ WINDOW if nil defaults to the frame's root window."
      with child = (window-top-child window)
      with ret = nil
      while child
-     for layout = (compiler-explorer--window-layout child)
+     for layout = (ce--window-layout child)
      do (setq ret (if ret (vector ret layout) layout)
               child (window-next-sibling child))
      finally return ret))))
 
-(defun compiler-explorer--session-savable-p ()
+(defun ce--session-savable-p ()
   "Return non-nil if the current session should be saved.
 A session that has no source code or is the same as an
 example/default is not saved."
-  (and (compiler-explorer--active-p)
+  (and (ce--active-p)
        (let ((example
-              (or (plist-get compiler-explorer--language-data :example) ""))
-             (string (with-current-buffer compiler-explorer--buffer
+              (or (plist-get ce--language-data :example) ""))
+             (string (with-current-buffer ce--buffer
                        (string-trim (buffer-string)))))
          (not (or (string-empty-p string)
                   (string= string (string-trim example)))))))
 
-(defun compiler-explorer--cleanup-1 (&optional skip-save-session)
+(defun ce--cleanup-1 (&optional skip-save-session)
   "Kill current session.
 If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
-  (when (and (not skip-save-session)
-             (compiler-explorer--session-savable-p))
-    (ring-insert compiler-explorer--session-ring
-                 (compiler-explorer--current-session)))
+  (when (and (not skip-save-session) (ce--session-savable-p))
+    (ring-insert ce--session-ring (ce--current-session)))
 
   ;; Abort last request and cancel the timer for recompilation.
   (with-demoted-errors "compiler-explorer--cleanup: %s"
-    (when-let* ((req compiler-explorer--last-compilation-request))
+    (when-let* ((req ce--last-compilation-request))
       (when (process-live-p req)
         (delete-process req)))
-    (when-let* ((req compiler-explorer--last-exe-request))
+    (when-let* ((req ce--last-exe-request))
       (when (process-live-p req)
         (delete-process req)))
-    (when compiler-explorer--recompile-timer
-      (cancel-timer compiler-explorer--recompile-timer)))
+    (when ce--recompile-timer
+      (cancel-timer ce--recompile-timer)))
 
   ;; Kill all of our buffers.
   (mapc (lambda (buffer)
@@ -1135,48 +1091,48 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
                           (ignore-errors (kill-buffer buffer)))
                   (let ((kill-buffer-hook nil))
                     (kill-buffer (current-buffer))))))))
-        (cl-list* (get-buffer compiler-explorer--buffer)
-                  (get-buffer compiler-explorer--compiler-buffer)
-                  (get-buffer compiler-explorer--output-buffer)
-                  (get-buffer compiler-explorer--exe-output-buffer)
-                  (mapcar #'cadr compiler-explorer--selected-tools)))
+        (cl-list* (get-buffer ce--buffer)
+                  (get-buffer ce--compiler-buffer)
+                  (get-buffer ce--output-buffer)
+                  (get-buffer ce--exe-output-buffer)
+                  (mapcar #'cadr ce--selected-tools)))
 
-  (setq compiler-explorer--last-compilation-request nil)
-  (setq compiler-explorer--recompile-timer nil)
-  (setq compiler-explorer--last-exe-request nil)
-  (setq compiler-explorer--compiler-data nil)
-  (setq compiler-explorer--selected-libraries nil)
-  (setq compiler-explorer--selected-tools nil)
-  (setq compiler-explorer--language-data nil)
-  (setq compiler-explorer--compiler-arguments "")
-  (setq compiler-explorer--execution-arguments "")
-  (setq compiler-explorer--execution-input "")
+  (setq ce--last-compilation-request nil)
+  (setq ce--recompile-timer nil)
+  (setq ce--last-exe-request nil)
+  (setq ce--compiler-data nil)
+  (setq ce--selected-libraries nil)
+  (setq ce--selected-tools nil)
+  (setq ce--language-data nil)
+  (setq ce--compiler-arguments "")
+  (setq ce--execution-arguments "")
+  (setq ce--execution-input "")
 
-  (when compiler-explorer--project-dir
+  (when ce--project-dir
     (with-demoted-errors "compiler-explorer--cleanup: delete-directory: %s"
-      (delete-directory compiler-explorer--project-dir t)))
-  (setq compiler-explorer--project-dir nil)
+      (delete-directory ce--project-dir t)))
+  (setq ce--project-dir nil)
 
-  (when compiler-explorer-mode
-    (compiler-explorer-mode -1)))
+  (when ce-mode
+    (ce-mode -1)))
 
-(defun compiler-explorer--cleanup (&optional skip-save-session)
+(defun ce--cleanup (&optional skip-save-session)
   "Kill current session.
 If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
-  (unless compiler-explorer--cleaning-up
-    (let ((compiler-explorer--cleaning-up t))
-      (compiler-explorer--cleanup-1 skip-save-session))))
+  (unless ce--cleaning-up
+    (let ((ce--cleaning-up t))
+      (ce--cleanup-1 skip-save-session))))
 
 
 ;; Source<->ASM overlays
 
-(defun compiler-explorer--overlay-bg-base (percent)
+(defun ce--overlay-bg-base (percent)
   "Get the color for overlay background, PERCENT darker from default."
   (when-let* ((bg (face-background 'default nil t)))
     (unless (string= bg "unspecified-bg")
       (color-darken-name bg percent))))
 
-(defcustom compiler-explorer-overlays '(46 28 17 10 6)
+(defcustom ce-overlays '(46 28 17 10 6)
   "List of faces or specs used for ASM<->source mappings.
 Each element can either be a face or a number.  If it's a face,
 it is used as one of the faces for overlays.  If it's a number, a
@@ -1185,11 +1141,11 @@ being the background color of the default face, darkened by this
 many percent."
   :type '(repeat (choice face (integer :tag "Darken percentage"))))
 
-(defface compiler-explorer-cursor-entered
+(defface ce-cursor-entered
   `((t :weight bold))
   "Face used for overlays containing the point.")
 
-(defcustom compiler-explorer-source-to-asm-mappings t
+(defcustom ce-source-to-asm-mappings t
   "If non-nil, decorate the source and ASM buffers.
 The added overlays show which portion of source code maps to ASM
 instructions.  Calling `compiler-explorer-jump' when point is
@@ -1197,31 +1153,30 @@ inside one of these colored blocks jumps to and highlights the
 corresponding overlay in the other buffer."
   :type 'boolean)
 
-(defun compiler-explorer--cursor-entered (overlays face)
+(defun ce--cursor-entered (overlays face)
   "Temporarily highlight all entered OVERLAYS using FACE as base face."
   (dolist (ov overlays)
-    (overlay-put ov 'face
-                 `(:inherit (compiler-explorer-cursor-entered ,face)))))
+    (overlay-put ov 'face `(:inherit (ce-cursor-entered ,face)))))
 
-(defun compiler-explorer--cursor-left (overlays face)
+(defun ce--cursor-left (overlays face)
   "Unhighlight OVERLAYS that were left, restoring FACE as their face."
   (dolist (ov overlays)
     (overlay-put ov 'face face)))
 
-(defun compiler-explorer--build-overlays (regions)
+(defun ce--build-overlays (regions)
   "Add source<->ASM mapping overlays in REGIONS.
 REGIONS should be a list of conses (LINE . POINTS), where LINE is
 the line number in source buffer, and POINTS is a list of points
 that are inside lines in the ASM buffer that map to this source
 line."
-  (with-current-buffer compiler-explorer--compiler-buffer
-    (remove-overlays nil nil 'compiler-explorer--overlay t))
-  (with-current-buffer compiler-explorer--buffer
-    (remove-overlays nil nil 'compiler-explorer--overlay t))
+  (with-current-buffer ce--compiler-buffer
+    (remove-overlays nil nil 'ce--overlay t))
+  (with-current-buffer ce--buffer
+    (remove-overlays nil nil 'ce--overlay t))
 
   (setq regions (sort regions #'car-less-than-car))
 
-  (let* ((faces (or compiler-explorer-overlays '(default)))
+  (let* ((faces (or ce-overlays '(default)))
          face
          source-overlay asm-overlays
          prev-ov
@@ -1230,27 +1185,24 @@ line."
             (list
              (lambda (_window _pos kind)
                (let* ((siblings
-                       (overlay-get ov 'compiler-explorer--overlay-group))
+                       (overlay-get ov 'ce--overlay-group))
                       (target (overlay-get
-                               (overlay-get ov 'compiler-explorer--target)
-                               'compiler-explorer--overlay-group))
+                               (overlay-get ov 'ce--target)
+                               'ce--overlay-group))
                       (ovs (cl-delete-duplicates
                             (remq nil
                                   (append siblings target)))))
                  (pcase kind
-                   ('entered
-                    (compiler-explorer--cursor-entered ovs face))
-                   ('left
-                    (compiler-explorer--cursor-left ovs face)))))))))
+                   ('entered (ce--cursor-entered ovs face))
+                   ('left (ce--cursor-left ovs face)))))))))
     (pcase-dolist (`(,line-num . ,points-in-asm) regions)
       (setq face (car faces))
       (when (integerp face)
-        (setq face `(:background ,(compiler-explorer--overlay-bg-base face)
-                                 :extend t)))
+        (setq face `(:background ,(ce--overlay-bg-base face) :extend t)))
       (setq faces (append (cdr faces) (list face)))
       (setq asm-overlays nil source-overlay nil)
 
-      (with-current-buffer compiler-explorer--buffer
+      (with-current-buffer ce--buffer
         (save-excursion
           (save-restriction
             (widen)
@@ -1258,8 +1210,8 @@ line."
             (forward-line (1- line-num))
             (let ((ov (make-overlay (line-beginning-position)
                                     (line-beginning-position 2))))
-              (overlay-put ov 'compiler-explorer--overlay t)
-              (overlay-put ov 'compiler-explorer--overlay-group (list ov))
+              (overlay-put ov 'ce--overlay t)
+              (overlay-put ov 'ce--overlay-group (list ov))
               (overlay-put ov 'cursor-sensor-functions
                            (funcall make-cursor-sensor-functions ov face))
               (overlay-put ov 'face face)
@@ -1267,7 +1219,7 @@ line."
               (setq source-overlay ov))))
         (cursor-sensor-mode +1))
 
-      (with-current-buffer compiler-explorer--compiler-buffer
+      (with-current-buffer ce--compiler-buffer
         (dolist (pt points-in-asm)
           (goto-char pt)
           (setq prev-ov (car asm-overlays))
@@ -1284,8 +1236,8 @@ line."
            (t
             (let ((ov (make-overlay (line-beginning-position)
                                     (line-beginning-position 2))))
-              (overlay-put ov 'compiler-explorer--overlay t)
-              (overlay-put ov 'compiler-explorer--target source-overlay)
+              (overlay-put ov 'ce--overlay t)
+              (overlay-put ov 'ce--target source-overlay)
               (overlay-put ov 'cursor-sensor-functions
                            (funcall make-cursor-sensor-functions ov face))
               (overlay-put ov 'face face)
@@ -1296,14 +1248,13 @@ line."
 
       (setq asm-overlays (seq-sort-by #'overlay-start #'< asm-overlays))
       (dolist (ov asm-overlays)
-        (overlay-put ov 'compiler-explorer--overlay-group asm-overlays))
-      (overlay-put source-overlay 'compiler-explorer--target
-                   (car asm-overlays)))))
+        (overlay-put ov 'ce--overlay-group asm-overlays))
+      (overlay-put source-overlay 'ce--target (car asm-overlays)))))
 
 
 ;; Stuff/hacks for integration with other packages
 
-(defcustom compiler-explorer-make-temp-file t
+(defcustom ce-make-temp-file t
   "If non-nil, make a temporary file/dir for a `compiler-explorer' session.
 This is required for integration with some other packages, for
 example `compilation-mode' - with this, you can navigate to
@@ -1316,33 +1267,32 @@ you can use packages that require one.
 When the session is killed, the temporary directory is deleted."
   :type 'boolean)
 
-(defvar compiler-explorer--project-dir nil)
-(defun compiler-explorer--project-find-function (_dir)
+(defvar ce--project-dir nil)
+(defun ce--project-find-function (_dir)
   "Return project with a temporary directory in a compiler explorer session."
-  (and compiler-explorer--project-dir
-       `(transient . ,compiler-explorer--project-dir)))
+  (and ce--project-dir `(transient . ,ce--project-dir)))
 
-(defvar compiler-explorer--filename-regexp "<source>\\|\\(example[.][^.]+$\\)")
-(defun compiler-explorer--compilation-parse-errors-filename
+(defvar ce--filename-regexp "<source>\\|\\(example[.][^.]+$\\)")
+(defun ce--compilation-parse-errors-filename
     (filename)
   "Wrapper for parsing FILENAME in compiler output buffer.
 This allows navigating to errors in source code from that buffer."
-  (when (string-match-p compiler-explorer--filename-regexp filename)
+  (when (string-match-p ce--filename-regexp filename)
     (file-name-nondirectory
-     (buffer-file-name (get-buffer compiler-explorer--buffer)))))
+     (buffer-file-name (get-buffer ce--buffer)))))
 
-(defcustom compiler-explorer-document-opcodes t
+(defcustom ce-document-opcodes t
   "If non-nil, provide documentation for opcodes in ASM buffers.
 This uses `eldoc' to output documentation for opcodes at point in
 the minibuffer and separate help buffers."
   :type 'boolean)
 
-(defun compiler-explorer--compilation-eldoc-documentation-function (callback)
+(defun ce--compilation-eldoc-documentation-function (callback)
   "Call CALLBACK with the documentation for opcode at point.
 This is eldoc function for compiler explorer."
   (when-let* ((opcode (thing-at-point 'symbol)))
-    (compiler-explorer--asm-opcode-doc
-     (plist-get compiler-explorer--compiler-data :instructionSet)
+    (ce--asm-opcode-doc
+     (plist-get ce--compiler-data :instructionSet)
      opcode
      (lambda (doc)
        (funcall callback
@@ -1356,20 +1306,20 @@ This is eldoc function for compiler explorer."
 
 ;; Session management
 
-(defcustom compiler-explorer-sessions-file
+(defcustom ce-sessions-file
   (expand-file-name "compiler-explorer" user-emacs-directory)
   "File where sessions are persisted."
   :type 'file)
 
-(defcustom compiler-explorer-sessions 5
+(defcustom ce-sessions 5
   "Size of the session ring."
   :type 'integer)
 
-(defvar compiler-explorer--session-ring
-  (let ((ring (make-ring compiler-explorer-sessions)))
+(defvar ce--session-ring
+  (let ((ring (make-ring ce-sessions)))
     (ignore-errors
       (with-temp-buffer
-        (insert-file-contents compiler-explorer-sessions-file)
+        (insert-file-contents ce-sessions-file)
         (let ((elts (read (current-buffer)))
               version)
           (if (and (consp elts) (integerp (car elts)))
@@ -1385,25 +1335,25 @@ This is eldoc function for compiler explorer."
               (ring-insert ring e))))))
     ring))
 
-(defun compiler-explorer--current-session ()
+(defun ce--current-session ()
   "Serialize current session as plist."
   `(
     :version 1
-    :lang-name ,(plist-get compiler-explorer--language-data :name)
-    :compiler ,(plist-get compiler-explorer--compiler-data :id)
+    :lang-name ,(plist-get ce--language-data :name)
+    :compiler ,(plist-get ce--compiler-data :id)
     :libs ,(mapcar (pcase-lambda (`(,id ,vid ,_)) (cons id vid))
-                   compiler-explorer--selected-libraries)
+                   ce--selected-libraries)
     :tools ,(mapcar (pcase-lambda (`(,id ,_ ,args ,stdin))
                       (list id args stdin))
-                    compiler-explorer--selected-tools)
-    :args ,compiler-explorer--compiler-arguments
-    :exe-args ,compiler-explorer--execution-arguments
-    :input ,compiler-explorer--execution-input
-    :source ,(with-current-buffer (get-buffer compiler-explorer--buffer)
+                    ce--selected-tools)
+    :args ,ce--compiler-arguments
+    :exe-args ,ce--execution-arguments
+    :input ,ce--execution-input
+    :source ,(with-current-buffer (get-buffer ce--buffer)
                (buffer-substring-no-properties (point-min) (point-max)))
-    :layout ,(unless noninteractive (compiler-explorer--window-layout))))
+    :layout ,(unless noninteractive (ce--window-layout))))
 
-(defun compiler-explorer--stringize-session (session)
+(defun ce--stringize-session (session)
   "Stringify a saved SESSION.
 The return value is a helpful human-readable string that
 describes the session contents."
@@ -1414,21 +1364,21 @@ describes the session contents."
             (concat (buffer-substring-no-properties (point-min) (point))
                     (unless (eobp) "...")))))
 
-(defun compiler-explorer--session-alist ()
+(defun ce--session-alist ()
   "Get an alist of the sessions.
 The car of each element will be a human readable string for the
 session.  The cdr will be a cons (SESSION-DATA . INDEX-IN-RING)."
   (cl-loop
-   with sessions = (ring-elements compiler-explorer--session-ring)
+   with sessions = (ring-elements ce--session-ring)
    for session in sessions
    for i from 0
-   collect (list (compiler-explorer--stringize-session session) session i)))
+   collect (list (ce--stringize-session session) session i)))
 
-(defcustom compiler-explorer-restore-layouts t
+(defcustom ce-restore-layouts t
   "Restore window layouts from previous sessions."
   :type 'boolean)
 
-(defun compiler-explorer--restore-session (session)
+(defun ce--restore-session (session)
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
   (pcase-let
@@ -1456,59 +1406,56 @@ It must have been created with `compiler-explorer--current-session'."
       (unless (funcall pred val)
         (error "Invalid %s: %s" sym val)))
 
-    (let ((compiler-explorer--inhibit-request t))
-      (compiler-explorer-new-session lang-name compiler)
-      (with-current-buffer (get-buffer compiler-explorer--buffer)
+    (let ((ce--inhibit-request t))
+      (ce-new-session lang-name compiler)
+      (with-current-buffer (get-buffer ce--buffer)
         (let ((inhibit-modification-hooks t))
           (erase-buffer)
           (insert source)
           (set-buffer-modified-p nil)))
       (pcase-dolist (`(,id . ,vid) libs)
-        (compiler-explorer-add-library id vid))
+        (ce-add-library id vid))
       (pcase-dolist (`(,id ,args ,stdin) tools)
-        (compiler-explorer-add-tool id)
-        (compiler-explorer-set-tool-args id args)
-        (compiler-explorer-set-tool-input id stdin))
-      (compiler-explorer-set-compiler-args args)
-      (compiler-explorer-set-execution-args exe-args)
-      (compiler-explorer-set-input input)
-      (when (and layout compiler-explorer-restore-layouts)
-        (compiler-explorer-layout layout)))
-    (compiler-explorer--request-async)
-    (compiler-explorer--define-menu)))
+        (ce-add-tool id)
+        (ce-set-tool-args id args)
+        (ce-set-tool-input id stdin))
+      (ce-set-compiler-args args)
+      (ce-set-execution-args exe-args)
+      (ce-set-input input)
+      (when (and layout ce-restore-layouts)
+        (ce-layout layout)))
+    (ce--request-async)
+    (ce--define-menu)))
 
-(defun compiler-explorer--save-sessions ()
+(defun ce--save-sessions ()
   "Save all sessions to a file."
-  (let ((current-session
-         (and (compiler-explorer--active-p)
-              (compiler-explorer--current-session))))
+  (let ((current-session (and (ce--active-p) (ce--current-session))))
     (when current-session
-      (ring-insert compiler-explorer--session-ring current-session))
-    (with-temp-file compiler-explorer-sessions-file
+      (ring-insert ce--session-ring current-session))
+    (with-temp-file ce-sessions-file
       (insert ";; Auto-generated file; don't edit -*- mode: lisp-data -*-\n")
       (let ((print-length nil)
             (print-level nil))
         (print
          (cons 1                        ;version
-               (ring-elements compiler-explorer--session-ring))
+               (ring-elements ce--session-ring))
          (current-buffer))))))
 
 
 ;; User commands & modes
 
-(defun compiler-explorer--active-p ()
+(defun ce--active-p ()
   "Return non-nil if we're in a `compiler-explorer' session."
-  (bufferp (get-buffer compiler-explorer--buffer)))
+  (bufferp (get-buffer ce--buffer)))
 
-(defvar compiler-explorer--recompile-timer nil
+(defvar ce--recompile-timer nil
   "Timer for recompilation.")
 
-(defun compiler-explorer--after-change (&rest _args)
+(defun ce--after-change (&rest _args)
   "Schedule recompilation after buffer is modified."
-  (when compiler-explorer--recompile-timer
-    (cancel-timer compiler-explorer--recompile-timer))
-  (setq compiler-explorer--recompile-timer
-        (run-with-timer 0.5 nil #'compiler-explorer--request-async))
+  (when ce--recompile-timer
+    (cancel-timer ce--recompile-timer))
+  (setq ce--recompile-timer (run-with-timer 0.5 nil #'ce--request-async))
 
   ;; Prevent 'kill anyway?' when killing the buffer.
   (restore-buffer-modified-p nil)
@@ -1516,73 +1463,65 @@ It must have been created with `compiler-explorer--current-session'."
   ;; Set the header line status to "Wait..."
   (force-mode-line-update t))
 
-(defvar compiler-explorer-mode-map (make-sparse-keymap)
+(defvar ce-mode-map (make-sparse-keymap)
   "Keymap used in all compiler explorer buffers.")
 
-(define-minor-mode compiler-explorer--local-mode
+(define-minor-mode ce--local-mode
   "Minor mode used in all compiler explorer buffers."
   :interactive nil
   :lighter ""
-  (add-hook 'kill-buffer-hook #'compiler-explorer--cleanup nil t)
-  (add-hook 'project-find-functions
-            #'compiler-explorer--project-find-function nil t)
+  (add-hook 'kill-buffer-hook #'ce--cleanup nil t)
+  (add-hook 'project-find-functions #'ce--project-find-function nil t)
 
-  (when compiler-explorer--project-dir
-    (setq-local default-directory compiler-explorer--project-dir))
+  (when ce--project-dir
+    (setq-local default-directory ce--project-dir))
 
   (pcase (buffer-name)
-    ((pred (equal compiler-explorer--buffer))
-     (setq header-line-format
-           `(:eval (compiler-explorer--header-line-format-source)))
-     (add-hook 'after-change-functions
-               #'compiler-explorer--after-change nil t))
-    ((pred (equal compiler-explorer--compiler-buffer))
-     (setq header-line-format
-           `(:eval (compiler-explorer--header-line-format-compiler)))
+    ((pred (equal ce--buffer))
+     (setq header-line-format `(:eval (ce--header-line-format-source)))
+     (add-hook 'after-change-functions #'ce--after-change nil t))
+    ((pred (equal ce--compiler-buffer))
+     (setq header-line-format `(:eval (ce--header-line-format-compiler)))
      (setq truncate-lines t)           ;Make the ASM view more like godbolt.org
-     (when compiler-explorer-document-opcodes
-       (add-hook
-        'eldoc-documentation-functions
-        'compiler-explorer--compilation-eldoc-documentation-function nil t)
+     (when ce-document-opcodes
+       (add-hook 'eldoc-documentation-functions
+                 'ce--compilation-eldoc-documentation-function nil t)
        (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
        (eldoc-mode +1)))
-    ((pred (equal compiler-explorer--output-buffer))
+    ((pred (equal ce--output-buffer))
      (setq-local compilation-parse-errors-filename-function
-                 #'compiler-explorer--compilation-parse-errors-filename))
-    ((pred (equal compiler-explorer--exe-output-buffer))
-     (setq header-line-format
-           `(:eval (compiler-explorer--header-line-format-executor))))
-    ((guard (compiler-explorer--tool-id))
-     (setq header-line-format
-           `(:eval (compiler-explorer--header-line-format-tool))))))
+                 #'ce--compilation-parse-errors-filename))
+    ((pred (equal ce--exe-output-buffer))
+     (setq header-line-format `(:eval (ce--header-line-format-executor))))
+    ((guard (ce--tool-id))
+     (setq header-line-format `(:eval (ce--header-line-format-tool))))))
 
-(defun compiler-explorer--local-mode-maybe-enable ()
+(defun ce--local-mode-maybe-enable ()
   "Enable `compiler-explorer--local-mode' if required."
   (when (memq (current-buffer)
-              (cl-list*
-               (get-buffer compiler-explorer--buffer)
-               (get-buffer compiler-explorer--compiler-buffer)
-               (get-buffer compiler-explorer--output-buffer)
-               (get-buffer compiler-explorer--exe-output-buffer)
-               (mapcar #'cadr compiler-explorer--selected-tools)))
-    (compiler-explorer--local-mode +1)))
+              (cl-list* (get-buffer ce--buffer)
+                        (get-buffer ce--compiler-buffer)
+                        (get-buffer ce--output-buffer)
+                        (get-buffer ce--exe-output-buffer)
+                        (mapcar #'cadr ce--selected-tools)))
+    (ce--local-mode +1)))
 
-(define-globalized-minor-mode compiler-explorer-mode
-  compiler-explorer--local-mode
-  compiler-explorer--local-mode-maybe-enable
+(define-globalized-minor-mode ce-mode
+  ce--local-mode
+  ce--local-mode-maybe-enable
   :lighter " CE"
-  :keymap compiler-explorer-mode-map
-  (unless compiler-explorer-mode
-    (compiler-explorer--cleanup)))
+  :keymap ce-mode-map
+  (unless ce-mode
+    (ce--cleanup)))
 
-(defun compiler-explorer-show-output ()
+(defun ce-show-output ()
   "Show compiler stdout&stderr buffer."
   (interactive)
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (display-buffer compiler-explorer--output-buffer))
+  (display-buffer ce--output-buffer))
 
-(defvar compiler-explorer-params-change-hook nil
+(defvar ce-params-change-hook nil
   "Hook called when parameters change.
 Each function is called with two arguments: WHAT and VALUE.  WHAT
 is a symbol, either:
@@ -1596,7 +1535,7 @@ is a symbol, either:
 VALUE is the new value, a string; or a cons cell (ID . STRING) for
 tool-* changes.")
 
-(defun compiler-explorer-jump (&optional which)
+(defun ce-jump (&optional which)
   "Jump to corresponding ASM block or source code line.
 From source buffer, jump to the first ASM block for the line at
 point.  From ASM buffer, jump to the source buffer and line for
@@ -1614,12 +1553,12 @@ source code block.
 With a numeric prefix argument, jumps to the Nth ASM block for
 the same source line."
   (interactive "P")
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
   (if-let* ((ov (cl-find-if
-                 (lambda (ov) (overlay-get ov 'compiler-explorer--overlay))
+                 (lambda (ov) (overlay-get ov 'ce--overlay))
                  (overlays-at (point)))))
-      (let* ((group (overlay-get ov 'compiler-explorer--overlay-group))
+      (let* ((group (overlay-get ov 'ce--overlay-group))
              (index-of-this-ov (cl-position ov group))
              (requested-within-group
               (% (if (numberp which) (1- which) (1+ index-of-this-ov))
@@ -1630,9 +1569,9 @@ the same source line."
                                      ;; line?
                                      (= index-of-this-ov (1- (length group)))))
                             ;; Jump to the other buffer, e.g. source from ASM
-                            (overlay-get ov 'compiler-explorer--target)
+                            (overlay-get ov 'ce--target)
                           (nth requested-within-group group))))
-        (setq group (overlay-get target-ov 'compiler-explorer--overlay-group))
+        (setq group (overlay-get target-ov 'ce--overlay-group))
 
         (when (null which)
           (setq target-ov
@@ -1651,57 +1590,53 @@ the same source line."
 
         (message "%s block %d/%d"
                  (if (eq (current-buffer)
-                         (get-buffer compiler-explorer--buffer))
+                         (get-buffer ce--buffer))
                      "Source" "ASM")
                  (1+ (cl-position target-ov group))
                  (length group)))
     (error "No corresponding ASM or source code block at point")))
 
-(defun compiler-explorer-set-input (input)
+(defun ce-set-input (input)
   "Set the input to use as stdin for execution to INPUT, a string."
-  (interactive (list (if (compiler-explorer--active-p)
-                         (read-from-minibuffer
-                          "Stdin: " compiler-explorer--execution-input)
+  (interactive (list (if (ce--active-p)
+                         (read-from-minibuffer "Stdin: " ce--execution-input)
                        (user-error "Not in a `compiler-explorer' session"))))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (setq compiler-explorer--execution-input input)
-  (compiler-explorer--request-async)
-  (run-hook-with-args 'compiler-explorer-params-change-hook 'input input))
+  (setq ce--execution-input input)
+  (ce--request-async)
+  (run-hook-with-args 'ce-params-change-hook 'input input))
 
-(defvar compiler-explorer-set-compiler-args-history nil
+(defvar ce-set-compiler-args-history nil
   "Minibuffer history for `compiler-explorer-set-compiler-args'.")
 
-(defun compiler-explorer-set-compiler-args (args)
+(defun ce-set-compiler-args (args)
   "Set compilation arguments to the string ARGS and recompile."
-  (interactive (list (if (compiler-explorer--active-p)
+  (interactive (list (if (ce--active-p)
                          (read-from-minibuffer
                           "Compiler arguments: "
-                          compiler-explorer--compiler-arguments
-                          nil nil 'compiler-explorer-set-compiler-args-history)
+                          ce--compiler-arguments
+                          nil nil 'ce-set-compiler-args-history)
                        (user-error "Not in a `compiler-explorer' session"))))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (setq compiler-explorer--compiler-arguments args)
-  (compiler-explorer--request-async)
-  (run-hook-with-args 'compiler-explorer-params-change-hook
-                      'compiler-args args))
+  (setq ce--compiler-arguments args)
+  (ce--request-async)
+  (run-hook-with-args 'ce-params-change-hook 'compiler-args args))
 
-(defun compiler-explorer-set-execution-args (args)
+(defun ce-set-execution-args (args)
   "Set execution arguments to the string ARGS and recompile."
-  (interactive (list (if (compiler-explorer--active-p)
-                         (read-from-minibuffer
-                          "Execution arguments: "
-                          compiler-explorer--execution-arguments)
+  (interactive (list (if (ce--active-p)
+                         (read-from-minibuffer "Execution arguments: "
+                                               ce--execution-arguments)
                        (user-error "Not in a `compiler-explorer' session"))))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (setq compiler-explorer--execution-arguments args)
-  (compiler-explorer--request-async)
-  (run-hook-with-args 'compiler-explorer-params-change-hook
-                      'execution-args args))
+  (setq ce--execution-arguments args)
+  (ce--request-async)
+  (run-hook-with-args 'ce-params-change-hook 'execution-args args))
 
-(defun compiler-explorer-set-compiler (name-or-id)
+(defun ce-set-compiler (name-or-id)
   "Select compiler NAME-OR-ID for current session.
 Interactively, prompts for the name of a compiler.  With a prefix
 argument, prompts only for the name of a compiler that supports
@@ -1709,16 +1644,15 @@ execution."
   (interactive
    (list
     (and
-     (or (compiler-explorer--active-p)
-         (user-error "Not in a `compiler-explorer' session"))
+     (or (ce--active-p) (user-error "Not in a `compiler-explorer' session"))
      (or
-      (get-text-property (point) 'compiler-explorer-compiler-id)
-      (let* ((lang compiler-explorer--language-data)
+      (get-text-property (point) 'ce-compiler-id)
+      (let* ((lang ce--language-data)
              (default (plist-get lang :defaultCompiler))
              (compilers (mapcar
                          (pcase-lambda ((map :name :id :supportsExecute :lang))
                            (list name id supportsExecute lang))
-                         (compiler-explorer--compilers))))
+                         (ce--compilers))))
         (completing-read (concat "Compiler"
                                  (when current-prefix-arg " (with execution)")
                                  ": ")
@@ -1732,34 +1666,34 @@ execution."
                          t
                          (car (cl-find default compilers
                                        :test #'string= :key #'cadr))))))))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
   (pcase-let*
-      (((map (:id lang-id) :defaultCompiler) compiler-explorer--language-data)
+      (((map (:id lang-id) :defaultCompiler) ce--language-data)
        (name-or-id (or name-or-id defaultCompiler))
        (compiler-data (seq-find
                        (pcase-lambda ((map :id :name :lang))
                          (and (member name-or-id (list id name))
                               (string= lang lang-id)))
-                       (compiler-explorer--compilers))))
+                       (ce--compilers))))
     (unless compiler-data
       (error "No compiler %S for lang %S" name-or-id lang-id))
-    (setq compiler-explorer--compiler-data compiler-data)
-    (with-current-buffer (get-buffer compiler-explorer--compiler-buffer)
-      (compiler-explorer--request-async)
+    (setq ce--compiler-data compiler-data)
+    (with-current-buffer (get-buffer ce--compiler-buffer)
+      (ce--request-async)
 
       (pop-to-buffer (current-buffer))
 
-      (compiler-explorer--define-menu)
+      (ce--define-menu)
 
-      (run-hook-with-args 'compiler-explorer-params-change-hook
+      (run-hook-with-args 'ce-params-change-hook
                           'compiler (plist-get compiler-data :name)))))
 
-(defun compiler-explorer-add-library (id version-id)
+(defun ce-add-library (id version-id)
   "Add library ID with VERSION-ID to current compilation."
   (interactive
-   (let* ((lang (or (and (compiler-explorer--active-p)
-                         (plist-get compiler-explorer--language-data :id))
+   (let* ((lang (or (and (ce--active-p)
+                         (plist-get ce--language-data :id))
                     (user-error "Not in a `compiler-explorer' session")))
           (candidates (cl-reduce #'nconc
                                  (mapcar
@@ -1768,19 +1702,18 @@ execution."
                                      (pcase-lambda ((map :version (:id vid)))
                                        `(,(concat name " " version) ,id ,vid))
                                      versions))
-                                  (compiler-explorer--libraries lang))))
+                                  (ce--libraries lang))))
           (res (completing-read
                 "Add library: " candidates
                 ;; Ignore libraries that are already added.
                 (pcase-lambda (`(,_ ,id ,_))
-                  (null (assoc id compiler-explorer--selected-libraries)))
+                  (null (assoc id ce--selected-libraries)))
                 t)))
      (cdr (assoc res candidates))))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
   (let* ((libentry
-          (cl-find id (compiler-explorer--libraries
-                       (plist-get compiler-explorer--language-data :id))
+          (cl-find id (ce--libraries (plist-get ce--language-data :id))
                    :key (lambda (l) (plist-get l :id))
                    :test #'string=))
          (version-entry
@@ -1791,95 +1724,92 @@ execution."
       (error "Library with id %S is invalid for the current language" id))
     (unless version-entry
       (error "Version id %S is invalid for library %S" version-id id))
-    (push (list id version-id libentry) compiler-explorer--selected-libraries)
-    (compiler-explorer--request-async))
+    (push (list id version-id libentry) ce--selected-libraries)
+    (ce--request-async))
 
   ;; Repopulate list of libraries to remove
-  (compiler-explorer--define-menu))
+  (ce--define-menu))
 
-(defun compiler-explorer-remove-library (id)
+(defun ce-remove-library (id)
   "Remove library with ID.
 It must have previously been added with
 `compiler-explorer-add-library'."
   (interactive
-   (if (compiler-explorer--active-p)
+   (if (ce--active-p)
        (let* ((libs-by-name
                (mapcar (pcase-lambda (`(,_ ,_ ,entry))
                          (cons (plist-get entry :name) entry))
-                       compiler-explorer--selected-libraries))
+                       ce--selected-libraries))
               (choice
                (completing-read "Remove library: "
                                 (mapcar #'car libs-by-name) nil t))
               (entry (cdr (assoc choice libs-by-name))))
          (list (plist-get entry :id)))
      (user-error "Not in a `compiler-explorer' session")))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (setq compiler-explorer--selected-libraries
-        (delq (assoc id compiler-explorer--selected-libraries)
-              compiler-explorer--selected-libraries))
-  (compiler-explorer--request-async)
+  (setq ce--selected-libraries
+        (delq (assoc id ce--selected-libraries) ce--selected-libraries))
+  (ce--request-async)
 
   ;; Repopulate list of libraries to remove
-  (compiler-explorer--define-menu))
+  (ce--define-menu))
 
-(defvar compiler-explorer-dedicate-windows)
+(defvar ce-dedicate-windows)
 
-(defun compiler-explorer-add-tool (id)
+(defun ce-add-tool (id)
   "Add tool ID to the current compilation."
   (interactive
-   (let* ((lang (or (and (compiler-explorer--active-p)
-                         (plist-get compiler-explorer--language-data :id))
+   (let* ((lang (or (and (ce--active-p)
+                         (plist-get ce--language-data :id))
                     (user-error "Not in a `compiler-explorer' session")))
-          (candidates (mapcar #'car (compiler-explorer--tools lang)))
+          (candidates (mapcar #'car (ce--tools lang)))
           (res (completing-read
                 "Add tool: " candidates
                 ;; Ignore tools that are already added.
-                (lambda (id)
-                  (null (assoc id compiler-explorer--selected-tools)))
+                (lambda (id) (null (assoc id ce--selected-tools)))
                 t)))
      (list res)))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
 
-  (when (assoc id compiler-explorer--selected-tools)
+  (when (assoc id ce--selected-tools)
     (error "Tool %s already added" id))
 
   (let ((buf (generate-new-buffer
-              (format compiler-explorer--tool-buffer-format id)))
+              (format ce--tool-buffer-format id)))
         window)
-    (push (list id buf "" "") compiler-explorer--selected-tools)
+    (push (list id buf "" "") ce--selected-tools)
     (unless noninteractive
       (setq window (display-buffer buf))
-      (when (and (windowp window) compiler-explorer-dedicate-windows)
+      (when (and (windowp window) ce-dedicate-windows)
         (set-window-dedicated-p window t)))
     (with-current-buffer buf
-      (compiler-explorer--local-mode)
+      (ce--local-mode)
       (setq buffer-read-only t)
       (setq buffer-undo-list t)))
 
-  (compiler-explorer--request-async)
+  (ce--request-async)
 
   ;; Repopulate list of tools to remove
-  (compiler-explorer--define-menu))
+  (ce--define-menu))
 
-(defun compiler-explorer-remove-tool (id)
+(defun ce-remove-tool (id)
   "Remove tool ID from the current compilation."
   (interactive
-   (if (compiler-explorer--active-p)
-       (let ((tools (mapcar #'car compiler-explorer--selected-tools)))
+   (if (ce--active-p)
+       (let ((tools (mapcar #'car ce--selected-tools)))
          (list (completing-read "Remove tool: " tools nil t nil nil
-                                (compiler-explorer--tool-id))))
+                                (ce--tool-id))))
      (user-error "Not in a `compiler-explorer' session")))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
 
-  (if-let* ((entry (cdr (assoc id compiler-explorer--selected-tools)))
+  (if-let* ((entry (cdr (assoc id ce--selected-tools)))
             (buf (car entry)))
       (progn
-        (setq compiler-explorer--selected-tools
-              (delq (assoc id compiler-explorer--selected-tools)
-                    compiler-explorer--selected-tools))
+        (setq ce--selected-tools
+              (delq (assoc id ce--selected-tools) ce--selected-tools))
         (with-current-buffer buf
           (dolist (window (window-list))
             (with-selected-window window
@@ -1887,90 +1817,84 @@ It must have previously been added with
                          (window-parent window))
                 (delete-window window))))
           (let ((kill-buffer-hook
-                 (remq #'compiler-explorer--cleanup kill-buffer-hook)))
+                 (remq #'ce--cleanup kill-buffer-hook)))
             (kill-buffer (current-buffer)))))
     (error "Tool is not added: %s" id))
 
-  (compiler-explorer--request-async)
+  (ce--request-async)
   ;; Repopulate list of tools to remove
-  (compiler-explorer--define-menu))
+  (ce--define-menu))
 
-(defvar compiler-explorer--tool-context nil
+(defvar ce--tool-context nil
   "Let-bound variable that contains the tool id value for various commands.
 This is used so that we don't query the user for ID when they obviously
 want to perform some command for a specific tool.")
 
-(defvar compiler-explorer-set-tool-args-history nil
+(defvar ce-set-tool-args-history nil
   "Minibuffer history for `compiler-explorer-set-tool-args'.")
 
-(defun compiler-explorer-set-tool-args (id args)
+(defun ce-set-tool-args (id args)
   "Set the arguments of tool with ID to string ARGS."
   (interactive
    (and
-    (or (compiler-explorer--active-p)
+    (or (ce--active-p)
         (user-error "Not in a `compiler-explorer' session"))
-    (let* ((tools (or (mapcar #'car compiler-explorer--selected-tools)
+    (let* ((tools (or (mapcar #'car ce--selected-tools)
                       (user-error "No tools selected")))
            (tool
-            (or compiler-explorer--tool-context
+            (or ce--tool-context
                 (if (cdr tools)
                     (completing-read
-                     "Set args for tool: " tools nil t nil nil
-                     (compiler-explorer--tool-id))
+                     "Set args for tool: " tools nil t nil nil (ce--tool-id))
                   (car tools))))
            (args (read-from-minibuffer
                   (format "Set arguments for tool '%s': " tool)
-                  (caddr (assoc tool compiler-explorer--selected-tools))
-                  nil nil 'compiler-explorer-set-tool-args-history)))
+                  (caddr (assoc tool ce--selected-tools))
+                  nil nil 'ce-set-tool-args-history)))
       (list tool args))))
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
 
-  (if-let* ((tool-data (assoc id compiler-explorer--selected-tools)))
+  (if-let* ((tool-data (assoc id ce--selected-tools)))
       (setf (caddr tool-data) args)
     (error "Tool %S not added" id))
 
-  (compiler-explorer--request-async)
+  (ce--request-async)
 
-  (run-hook-with-args 'compiler-explorer-params-change-hook
-                      'tool-args (cons id args)))
+  (run-hook-with-args 'ce-params-change-hook 'tool-args (cons id args)))
 
-(defun compiler-explorer-set-tool-input (id input)
+(defun ce-set-tool-input (id input)
   "Set the standard input of tool with ID to string INPUT."
   (interactive
    (and
-    (or (compiler-explorer--active-p)
-        (user-error "Not in a `compiler-explorer' session"))
-    (let* ((tools (or (mapcar #'car compiler-explorer--selected-tools)
+    (or (ce--active-p) (user-error "Not in a `compiler-explorer' session"))
+    (let* ((tools (or (mapcar #'car ce--selected-tools)
                       (user-error "No tools selected")))
-           (lang (plist-get compiler-explorer--language-data :id))
+           (lang (plist-get ce--language-data :id))
            (tool
-            (or compiler-explorer--tool-context
+            (or ce--tool-context
                 (if (cdr tools)
                     (completing-read
-                     "Set stdin for tool: " tools nil t nil nil
-                     (compiler-explorer--tool-id))
+                     "Set stdin for tool: " tools nil t nil nil (ce--tool-id))
                   (car tools))))
-           (tool-data
-            (map-elt (compiler-explorer--tools lang) tool)))
+           (tool-data (map-elt (ce--tools lang) tool)))
       (unless (plist-get tool-data :allowStdin)
         (user-error "Tool %S does not support setting stdin" tool))
       (list tool (read-from-minibuffer
                   (format "Set input for tool '%s': " tool)
-                  (cadddr (assoc tool compiler-explorer--selected-tools)))))))
-  (unless (compiler-explorer--active-p)
+                  (cadddr (assoc tool ce--selected-tools)))))))
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
 
-  (if-let* ((tool-data (assoc id compiler-explorer--selected-tools)))
+  (if-let* ((tool-data (assoc id ce--selected-tools)))
       (setf (cadddr tool-data) input)
     (error "Tool %S not added" id))
 
-  (compiler-explorer--request-async)
+  (ce--request-async)
 
-  (run-hook-with-args 'compiler-explorer-params-change-hook
-                      'tool-input (cons id input)))
+  (run-hook-with-args 'ce-params-change-hook 'tool-input (cons id input)))
 
-(defun compiler-explorer-previous-session (&optional nth)
+(defun ce-previous-session (&optional nth)
   "Restore previous session.
 With optional argument NTH (default 0), restore NTH previous
 session.
@@ -1983,41 +1907,39 @@ When called without a prefix argument, this will cycle between
 all the previous sessions one by one."
   (interactive
    (when current-prefix-arg
-     (let* ((sessions-alist (compiler-explorer--session-alist))
+     (let* ((sessions-alist (ce--session-alist))
             (choice
              (completing-read "Restore session: " sessions-alist nil t)))
        (cddr (assoc choice sessions-alist)))))
-  (when (ring-empty-p compiler-explorer--session-ring)
+  (when (ring-empty-p ce--session-ring)
     (error "No previous sessions"))
   (unless nth
     (setq nth 0))
-  (let ((prev (ring-remove compiler-explorer--session-ring nth))
-        (current (and (compiler-explorer--session-savable-p)
-                      (compiler-explorer--current-session))))
+  (let ((prev (ring-remove ce--session-ring nth))
+        (current (and (ce--session-savable-p) (ce--current-session))))
 
     (condition-case nil
         (prog1 t
           (unwind-protect
-              (let ((compiler-explorer--session-ring (make-ring 1)))
+              (let ((ce--session-ring (make-ring 1)))
                 ;; Override the ring to not mess with it.
-                (compiler-explorer--restore-session prev))
+                (ce--restore-session prev))
             ;; Insert last session into the ring as the *oldest* item.  We have
             ;; to do this, otherwise we would only be able to cycle between two
             ;; sessions.
             (when current
-              (ring-insert-at-beginning
-               compiler-explorer--session-ring current))
+              (ring-insert-at-beginning ce--session-ring current))
 
             ;; Redefine the menu with the ring updated (for "Restore session"
             ;; submenu)
-            (compiler-explorer--define-menu)))
+            (ce--define-menu)))
       (error
-       (compiler-explorer--cleanup 'skip-save-session)
+       (ce--cleanup 'skip-save-session)
        (display-warning
         'compiler-explorer "Previous session appears to be corrupt" :warning)
        nil))))
 
-(defun compiler-explorer-discard-session (&optional indices interactive)
+(defun ce-discard-session (&optional indices interactive)
   "Kill the current session and forget about it.
 If INDICES is non-nil, it should be a list of ring indices.  If
 provided, the sessions at these indices will be removed from the
@@ -2030,19 +1952,19 @@ Interactively, discard the current session.  With a prefix
 argument, prompt for sessions to discard."
   (interactive
    (cond
-    ((and (not (compiler-explorer--active-p))
-          (ring-empty-p compiler-explorer--session-ring))
+    ((and (not (ce--active-p))
+          (ring-empty-p ce--session-ring))
      (user-error "No sessions"))
-    ((and (compiler-explorer--active-p)
+    ((and (ce--active-p)
           (not current-prefix-arg))
      (list nil t))
-    (t (let* ((sessions-alist (compiler-explorer--session-alist))
+    (t (let* ((sessions-alist (ce--session-alist))
               (choices
                (cl-loop
                 with sessions = (append (list '(""))
-                                        (and (compiler-explorer--active-p)
+                                        (and (ce--active-p)
                                              (list '("*current*")))
-                                        (compiler-explorer--session-alist))
+                                        (ce--session-alist))
                 while (cdr sessions)
                 for choice =
                 (completing-read "Discard sessions (RET to finish): "
@@ -2059,7 +1981,7 @@ argument, prompt for sessions to discard."
                   choices)
           t)))))
   (let ((current (or (null indices) (memq nil indices))))
-    (when (and current (not (compiler-explorer--active-p)))
+    (when (and current (not (ce--active-p)))
       (error "Not in a `compiler-explorer' session"))
     (if (and interactive (not (yes-or-no-p
                                (if (or (null indices) (equal indices '(nil)))
@@ -2071,15 +1993,14 @@ argument, prompt for sessions to discard."
         (user-error "Aborted")
       (setq indices (sort (delq nil indices) #'>))
 
-      (mapc (apply-partially #'ring-remove compiler-explorer--session-ring)
-            indices)
+      (mapc (apply-partially #'ring-remove ce--session-ring) indices)
 
       (when current
-        (compiler-explorer--cleanup 'skip-save-session)
-        (unless (ring-empty-p compiler-explorer--session-ring)
-          (compiler-explorer-previous-session))))))
+        (ce--cleanup 'skip-save-session)
+        (unless (ring-empty-p ce--session-ring)
+          (ce-previous-session))))))
 
-(defvar compiler-explorer-layouts
+(defvar ce-layouts
   '((source . asm)
     (source . [asm output])
     (source [asm output] . exe)
@@ -2098,14 +2019,14 @@ A layout can be either:
     remaining space
   - a number, n - apply n-th layout in this variable")
 
-(defcustom compiler-explorer-default-layout 0
+(defcustom ce-default-layout 0
   "The default layout to use.
 See `compiler-explorer-layouts' for available layouts."
   :type 'sexp)
 
-(defvar compiler-explorer--last-layout 0)
+(defvar ce--last-layout 0)
 
-(defcustom compiler-explorer-dedicate-windows t
+(defcustom ce-dedicate-windows t
   "Make all windows dedicated to their buffers.
 If non-nil, all compiler explorer windows will be bound to the
 buffers they are displaying via `set-window-dedicated-p' and
@@ -2113,7 +2034,7 @@ other, unrelated buffers will not be displayable in these
 windows."
   :type 'boolean)
 
-(defun compiler-explorer-layout (&optional layout)
+(defun ce-layout (&optional layout)
   "Layout current frame.
 Interactively, applies layout defined in variable
 `compiler-explorer-default-layout'.  When this command is called
@@ -2124,36 +2045,35 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
   (interactive
    (list
     (or (and (numberp current-prefix-arg) current-prefix-arg)
-        (when (eq last-command #'compiler-explorer-layout)
-          (1+ compiler-explorer--last-layout)))))
-  (unless (compiler-explorer--active-p)
+        (when (eq last-command #'ce-layout)
+          (1+ ce--last-layout)))))
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
   (cl-labels
       ((override-window-buffer
          (window buffer)
          (set-window-buffer window buffer)
-         (when compiler-explorer-dedicate-windows
+         (when ce-dedicate-windows
            (set-window-dedicated-p window t)))
        (do-it
          (spec)
          (pcase-exhaustive spec
            ('nil (when (window-parent) (delete-window)))
            ((and (pred numberp) n)
-            (do-it (nth n compiler-explorer-layouts)))
-           ('source (override-window-buffer (selected-window)
-                                            compiler-explorer--buffer))
-           ('asm (override-window-buffer (selected-window)
-                                         compiler-explorer--compiler-buffer))
-           ('output (override-window-buffer
-                     (selected-window)
-                     (get-buffer compiler-explorer--output-buffer)))
-           ('exe (override-window-buffer
-                  (selected-window)
-                  (get-buffer compiler-explorer--exe-output-buffer)))
-           ((and 'tool (guard compiler-explorer--selected-tools))
+            (do-it (nth n ce-layouts)))
+           ('source
+            (override-window-buffer (selected-window) ce--buffer))
+           ('asm
+            (override-window-buffer (selected-window) ce--compiler-buffer))
+           ('output
             (override-window-buffer
-                   (selected-window)
-                   (cadr (pop compiler-explorer--selected-tools))))
+             (selected-window) (get-buffer ce--output-buffer)))
+           ('exe
+            (override-window-buffer
+             (selected-window) (get-buffer ce--exe-output-buffer)))
+           ((and 'tool (guard ce--selected-tools))
+            (override-window-buffer
+             (selected-window) (cadr (pop ce--selected-tools))))
            (`(,left . ,right)
             (let ((right-window (split-window-right)))
               (do-it left)
@@ -2165,96 +2085,87 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
               (with-selected-window lower-window
                 (do-it lower))))
            (`[:tools]
-            (let ((compiler-explorer--selected-tools
-                   (copy-sequence compiler-explorer--selected-tools)))
-              (if compiler-explorer--selected-tools
-                  (if (cdr compiler-explorer--selected-tools)
+            (let ((ce--selected-tools (copy-sequence ce--selected-tools)))
+              (if ce--selected-tools
+                  (if (cdr ce--selected-tools)
                       (do-it [tool [:tools]])
                     (do-it 'tool))
                 (when (window-parent)
                   (delete-window))))))))
-    (or layout (setq layout compiler-explorer-default-layout))
+    (or layout (setq layout ce-default-layout))
     (when (numberp layout)
-      (setq layout (% layout (length compiler-explorer-layouts)))
-      (setq compiler-explorer--last-layout layout))
+      (setq layout (% layout (length ce-layouts)))
+      (setq ce--last-layout layout))
     (when (window-dedicated-p)
-      (unless compiler-explorer--local-mode
+      (unless ce--local-mode
         (select-window (split-window-horizontally)))
       (set-window-dedicated-p (selected-window) nil))
     (delete-other-windows)
     (condition-case err
-        (let ((compiler-explorer--selected-tools
-               (copy-sequence compiler-explorer--selected-tools)))
+        (let ((ce--selected-tools (copy-sequence ce--selected-tools)))
           (do-it layout))
       (error (message "Could not apply layout %s: %s" layout err)))
     (balance-windows)))
 
-(defun compiler-explorer-load-example (example)
+(defun ce-load-example (example)
   "Load an example named EXAMPLE.
 Interactively, this prompts for an example to load for the current language."
   (interactive
    (list
-    (and (or (compiler-explorer--active-p)
+    (and (or (ce--active-p)
              (user-error "Not in a `compiler-explorer' session"))
-         (completing-read
-          "Load example: "
-          (compiler-explorer--examples
-           (plist-get compiler-explorer--language-data :id))
-          nil t))))
-  (unless (compiler-explorer--active-p)
+         (completing-read "Load example: "
+                          (ce--examples (plist-get ce--language-data :id))
+                          nil t))))
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (if-let* ((lang (plist-get compiler-explorer--language-data :id))
-            (all (compiler-explorer--examples lang))
+  (if-let* ((lang (plist-get ce--language-data :id))
+            (all (ce--examples lang))
             (data (cdr (assoc example all))))
       (with-temp-buffer
-        (insert (plist-get
-                 (compiler-explorer--example lang (plist-get data :file))
-                 :file))
-        (compiler-explorer--replace-buffer-contents
-         (get-buffer compiler-explorer--buffer)
-         (current-buffer)))
+        (insert (plist-get (ce--example lang (plist-get data :file)) :file))
+        (ce--replace-buffer-contents (get-buffer ce--buffer) (current-buffer)))
     (error "Unknown example %S" example)))
 
-(defun compiler-explorer-make-link (&optional open)
+(defun ce-make-link (&optional open)
   "Save URL to current session in the kill ring and return it.
 With an optional prefix argument OPEN, open that link in a browser."
   (interactive "P")
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
   (let* ((compiler
           `(
-            :id ,(plist-get compiler-explorer--compiler-data :id)
+            :id ,(plist-get ce--compiler-data :id)
             :libs [,@(mapcar
                       (pcase-lambda (`(,id ,version ,_))
                         `(:id ,id :version ,version))
-                      compiler-explorer--selected-libraries)]
+                      ce--selected-libraries)]
             :tools [,@(mapcar
                        (pcase-lambda (`(,id ,_ ,args ,stdin))
                          `(:id ,id
                                :args ,(seq-into (split-string-and-unquote args)
                                                 'vector)
                                :stdin ,stdin))
-                       compiler-explorer--selected-tools)]
-            :options ,compiler-explorer--compiler-arguments
-            :filters ,(compiler-explorer--output-filters)))
+                       ce--selected-tools)]
+            :options ,ce--compiler-arguments
+            :filters ,(ce--output-filters)))
          (state
           `(:sessions
             [(
               :id 1
-              :language ,(plist-get compiler-explorer--language-data :id)
-              :source ,(with-current-buffer
-                           (get-buffer compiler-explorer--buffer)
+              :language ,(plist-get ce--language-data :id)
+              :source ,(with-current-buffer (get-buffer ce--buffer)
                          (buffer-string))
               :compilers [,compiler]
               :executors [
                           (
-                           :arguments ,compiler-explorer--execution-arguments
+                           :arguments ,ce--execution-arguments
                            :compiler ,compiler
-                           :stdin ,compiler-explorer--execution-input)
+                           :stdin ,ce--execution-input)
                           ])]))
          (response
-          (compiler-explorer--request-sync
-           "Generating shortlink" (compiler-explorer--url "shortener")
+          (ce--request-sync
+           "Generating shortlink" (ce--url "shortener")
            :method 'post
            :headers '(("Accept" . "application/json")
                       ("Content-Type" . "application/json"))
@@ -2264,7 +2175,7 @@ With an optional prefix argument OPEN, open that link in a browser."
     (message (kill-new url))
     (prog1 url (when open (browse-url-xdg-open url)))))
 
-(defun compiler-explorer-restore-from-link (url)
+(defun ce-restore-from-link (url)
   "Restore a compiler-explorer session from the given URL.
 URL should be a shortened compiler explorer URL, e.g. generated
 by `compiler-explorer-make-link', or created by the website itself."
@@ -2275,9 +2186,8 @@ by `compiler-explorer-make-link', or created by the website itself."
                     (substring filename 3)
                   (error "%s is not a valid compiler-explorer shortlink" url)))
                ((map (:sessions (seq session)))
-                (compiler-explorer--request-sync
-                 (format "Fetching state from %s" url)
-                 (compiler-explorer--url "shortlinkinfo" shortlink)))
+                (ce--request-sync (format "Fetching state from %s" url)
+                                  (ce--url "shortlinkinfo" shortlink)))
                ((map :language
                      :source
                      (:compilers
@@ -2285,63 +2195,62 @@ by `compiler-explorer-make-link', or created by the website itself."
                      (:executors
                       (seq (map :arguments :stdin))))
                 session)
-               (compiler-explorer--inhibit-request t))
-    (compiler-explorer-new-session language compiler-id)
+               (ce--inhibit-request t))
+    (ce-new-session language compiler-id)
     (seq-do (pcase-lambda ((and lib (map :id :version)))
               (if (and id version)
-                  (compiler-explorer-add-library id version)
+                  (ce-add-library id version)
                 (display-warning 'compiler-explorer
                                  (format "Invalid library: %s" lib)
                                  :warning)))
             libs)
     (seq-do (pcase-lambda ((map :id :args :stdin))
-              (compiler-explorer-add-tool id)
+              (ce-add-tool id)
               (if (or (listp args) (vectorp args))
-                  (compiler-explorer-set-tool-args id (string-join args ?\ ))
-                (compiler-explorer-set-tool-args id args))
+                  (ce-set-tool-args id (string-join args ?\ ))
+                (ce-set-tool-args id args))
               (unless (string-empty-p stdin)
-                (compiler-explorer-set-tool-input id stdin)))
+                (ce-set-tool-input id stdin)))
             tools)
-    (compiler-explorer-set-compiler-args options)
+    (ce-set-compiler-args options)
     (when arguments
-      (compiler-explorer-set-execution-args arguments))
+      (ce-set-execution-args arguments))
     (when stdin
-      (compiler-explorer-set-input stdin))
-    (with-current-buffer compiler-explorer--buffer
+      (ce-set-input stdin))
+    (with-current-buffer ce--buffer
       (erase-buffer)
       (insert source)))
-  (compiler-explorer--request-async))
+  (ce--request-async))
 
-(defvar compiler-explorer-new-session-hook '(compiler-explorer-layout)
+(defvar ce-new-session-hook '(ce-layout)
   "Hook run after creating new session.
 The source buffer is current when this hook runs.")
 
-(defun compiler-explorer-new-session-1 (lang &optional compiler interactive)
+(defun ce-new-session-1 (lang &optional compiler interactive)
   "Start new session for LANG (name or id).
 This is a subr of `compiler-explorer-new-session' that uses given
 LANG, COMPILER, INTERACTIVE."
-  (when-let* ((ent (cl-find lang (compiler-explorer--languages)
+  (when-let* ((ent (cl-find lang (ce--languages)
                             :key (lambda (l) (plist-get l :id))
                             :test #'string=)))
     (setq lang (plist-get ent :name)))
 
   ;; Clean everything up
-  (compiler-explorer--cleanup)
+  (ce--cleanup)
 
   ;; Enter session mode
-  (compiler-explorer-mode +1)
+  (ce-mode +1)
 
   ;; Generate temporary directory if needed
-  (setq compiler-explorer--project-dir
-        (and compiler-explorer-make-temp-file
-             (make-temp-file "compiler-explorer" 'dir)))
+  (setq ce--project-dir
+        (and ce-make-temp-file (make-temp-file "compiler-explorer" 'dir)))
 
   ;; Generate all the buffers
   (pcase-dolist (`(,buf ,mode ,ro)
-                 `((,compiler-explorer--buffer fundamental-mode nil)
-                   (,compiler-explorer--compiler-buffer asm-mode t)
-                   (,compiler-explorer--output-buffer compilation-mode t)
-                   (,compiler-explorer--exe-output-buffer text-mode t)))
+                 `((,ce--buffer fundamental-mode nil)
+                   (,ce--compiler-buffer asm-mode t)
+                   (,ce--output-buffer compilation-mode t)
+                   (,ce--exe-output-buffer text-mode t)))
     (with-current-buffer (generate-new-buffer buf)
       (with-demoted-errors "compiler-explorer-new-session-1: %S"
         (funcall mode))
@@ -2351,47 +2260,47 @@ LANG, COMPILER, INTERACTIVE."
   ;; Do the rest of the initialization: set up the source buffer and set the
   ;; compiler.
 
-  (pcase-let* ((lang-data (or (cl-find lang (compiler-explorer--languages)
+  (pcase-let* ((lang-data (or (cl-find lang (ce--languages)
                                        :key (lambda (l) (plist-get l :name))
                                        :test #'string=)
                               (error "Language %S does not exist" lang)))
                ((map :extensions :id :example) lang-data))
-    (setq compiler-explorer--language-data lang-data)
+    (setq ce--language-data lang-data)
 
     ;; Prefetch
-    (ignore (compiler-explorer--libraries id))
-    (ignore (compiler-explorer--examples id))
+    (ignore (ce--libraries id))
+    (ignore (ce--examples id))
 
-    (with-current-buffer compiler-explorer--buffer
+    (with-current-buffer ce--buffer
       ;; Find major mode by extension
       (cl-loop for ext across extensions
                for filename = (expand-file-name (concat "test" ext)
                                                 default-directory)
                while (eq major-mode 'fundamental-mode)
                do (let ((buffer-file-name filename))
-                    (with-demoted-errors "compiler-explorer-new-session-1: %S"
+                    (with-demoted-errors "compiler-explorer--new-session-1: %S"
                       (set-auto-mode))))
 
       (insert example)
       (save-current-buffer
         (condition-case err
-            (compiler-explorer-set-compiler compiler)
+            (ce-set-compiler compiler)
           (error (if interactive
-                     (call-interactively #'compiler-explorer-set-compiler)
+                     (call-interactively #'ce-set-compiler)
                    (signal (car err) (cdr err))))))
 
-      (when compiler-explorer--project-dir
+      (when ce--project-dir
         (setq buffer-file-name
               (expand-file-name (concat "source" (aref extensions 0))
-                                compiler-explorer--project-dir))
+                                ce--project-dir))
         (let ((save-silently t)) (save-buffer)))
 
-      (compiler-explorer--define-menu)
+      (ce--define-menu)
 
       (pop-to-buffer (current-buffer))
-      (run-hooks 'compiler-explorer-new-session-hook))))
+      (run-hooks 'ce-new-session-hook))))
 
-(defun compiler-explorer-new-session (lang &optional compiler)
+(defun ce-new-session (lang &optional compiler)
   "Create a new compiler explorer session with language named LANG.
 If COMPILER (name or id) is non-nil, set that compiler.
 
@@ -2407,29 +2316,29 @@ compiler."
   (interactive
    (list (completing-read "Language: "
                           (mapcar (lambda (lang) (plist-get lang :name))
-                                  (compiler-explorer--languages))
+                                  (ce--languages))
                           nil t)
          t))
   (let (success)
     (unwind-protect
         (progn
-          (let ((compiler-explorer--inhibit-request t))
-            (compiler-explorer-new-session-1 lang
-                                             (if (eq compiler t) nil compiler)
-                                             (eq compiler t)))
-          (compiler-explorer--request-async)
+          (let ((ce--inhibit-request t))
+            (ce-new-session-1 lang
+                              (if (eq compiler t) nil compiler)
+                              (eq compiler t)))
+          (ce--request-async)
           (setq success t))
       (unless success
-        (compiler-explorer--cleanup 'skip-save-session)))))
+        (ce--cleanup 'skip-save-session)))))
 
-(defun compiler-explorer-exit ()
+(defun ce-exit ()
   "Kill the current session."
   (interactive)
-  (unless (compiler-explorer--active-p)
+  (unless (ce--active-p)
     (error "Not in a `compiler-explorer' session"))
-  (compiler-explorer--cleanup))
+  (ce--cleanup))
 
-(defvar compiler-explorer-hook '()
+(defvar ce-hook '()
   "Hook run at the end of `compiler-explorer'.
 This hook can be used to run code regardless whether a session
 was created/restored.")
@@ -2443,20 +2352,19 @@ Otherwise, create a new session (`compiler-explorer-new-session').
 
 The hook `compiler-explorer-hook' is always run at the end."
   (interactive)
-  (let ((buffer (get-buffer compiler-explorer--buffer)))
+  (let ((buffer (get-buffer ce--buffer)))
     (cond
-     (buffer (pop-to-buffer buffer) (compiler-explorer--request-async))
-     ((and (not (ring-empty-p compiler-explorer--session-ring))
-           (compiler-explorer-previous-session)))
-     (t
-      (call-interactively #'compiler-explorer-new-session))))
-  (run-hooks 'compiler-explorer-hook))
+     (buffer (pop-to-buffer buffer) (ce--request-async))
+     ((and (not (ring-empty-p ce--session-ring)) (ce-previous-session)))
+     (t (call-interactively #'ce-new-session))))
+  (run-hooks 'ce-hook))
 
-(add-hook 'kill-emacs-hook #'compiler-explorer--save-sessions)
+(add-hook 'kill-emacs-hook #'ce--save-sessions)
 
 (provide 'compiler-explorer)
 ;;; compiler-explorer.el ends here
 
 ;; Local Variables:
 ;; indent-tabs-mode: nil
+;; read-symbol-shorthands: (("ce-" . "compiler-explorer-"))
 ;; End:
