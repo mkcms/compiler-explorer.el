@@ -6,7 +6,7 @@
 ;; Keywords: c, tools
 ;; Version: 0.6.1
 ;; Homepage: https://github.com/mkcms/compiler-explorer.el
-;; Package-Requires: ((emacs "27.1") (plz "0.9") (eldoc "1.15.0") (map "3.3.1") (seq "2.23"))
+;; Package-Requires: ((emacs "28.1") (plz "0.9") (eldoc "1.15.0") (map "3.3.1") (seq "2.23"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -110,14 +110,9 @@
 ;;
 ;; This hack was stolen from the built-in eglot.el.
 (eval-and-compile
-  (if (< emacs-major-version 28)
-      (progn
-        (load "eldoc" nil 'nomessage)
-        (load "seq" nil 'nomessage)
-        (load "map" nil 'nomessage))
-    (require 'eldoc)
-    (require 'seq)
-    (require 'map)))
+  (load "eldoc" nil 'nomessage)
+  (load "seq" nil 'nomessage)
+  (load "map" nil 'nomessage))
 
 (defgroup compiler-explorer nil "Client for compiler explorer service."
   :group 'tools)
