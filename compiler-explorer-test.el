@@ -446,7 +446,7 @@ int main(int argc, char** argv) {
              (get-buffer "*compiler-explorer tool clangtidytrunk*")))))
 
 (ert-deftest ce-session-ring ()
-  (let ((ce--session-ring (make-ring 5))
+  (let ((ce--session-ring nil)
         (ce-new-session-hook nil))
     (dotimes (index 5)
       (ce-test--with-session "C++" nil
@@ -455,7 +455,7 @@ int main(int argc, char** argv) {
           (insert (format "// test %s" index))
           (kill-buffer (current-buffer)))))
 
-    (let ((ce--session-ring (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       ;; Session "// test 1" is the 4th (index 3) oldest
       (ce-previous-session 3)
@@ -473,7 +473,7 @@ int main(int argc, char** argv) {
         (should (string= (format "// test 3") (buffer-string))))
       (kill-buffer ce--buffer))
 
-    (let ((ce--session-ring (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       ;; Session "// test 4" is the newest
       (ce-previous-session 0)
@@ -481,7 +481,7 @@ int main(int argc, char** argv) {
         (should (string= (format "// test 4") (buffer-string))))
       (kill-buffer ce--buffer))
 
-    (let ((ce--session-ring (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       ;; Session "// test 0" is the oldest
       (ce-previous-session 4)
@@ -489,7 +489,7 @@ int main(int argc, char** argv) {
         (should (string= (format "// test 0") (buffer-string))))
       (kill-buffer ce--buffer))
 
-    (let ((ce--session-ring (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       ;; Session "// test 3" is the second newest
       (ce-previous-session 1)
@@ -498,7 +498,7 @@ int main(int argc, char** argv) {
       (kill-buffer ce--buffer))
 
     (let ((ce--session-ring
-           (ring-copy ce--session-ring)))
+           (copy-tree ce--session-ring t)))
 
       ;; Cycling through all sessions
       (dotimes (i 15)
@@ -508,7 +508,7 @@ int main(int argc, char** argv) {
                            (buffer-string))))))))
 
 (ert-deftest ce-discard-session ()
-  (let ((ce--session-ring (make-ring 5))
+  (let ((ce--session-ring nil)
         (ce-new-session-hook nil))
     (dotimes (index 5)
       (ce-test--with-session "C++" nil
@@ -517,7 +517,7 @@ int main(int argc, char** argv) {
           (insert (format "// test %s" index))
           (kill-buffer (current-buffer)))))
 
-    (let ((ce--session-ring (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       (ce-discard-session '(0 4))
 
@@ -531,8 +531,7 @@ int main(int argc, char** argv) {
       (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string)))))
 
-    (let ((ce--session-ring
-           (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       (ce-discard-session '(1 2 4))
 
@@ -543,8 +542,7 @@ int main(int argc, char** argv) {
       (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string)))))
 
-    (let ((ce--session-ring
-           (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       (ce-discard-session '(0))
       (ce-discard-session '(0))
@@ -557,8 +555,7 @@ int main(int argc, char** argv) {
       (with-current-buffer ce--buffer
         (should (string= (format "// test 1") (buffer-string)))))
 
-    (let ((ce--session-ring
-           (ring-copy ce--session-ring)))
+    (let ((ce--session-ring (copy-tree ce--session-ring t)))
 
       (ce-previous-session)
       (ce-discard-session)
@@ -577,7 +574,7 @@ int main(int argc, char** argv) {
 (ert-deftest ce-restoring-from-shortlink ()
   (let ((url nil)
         (ce-new-session-hook nil))
-    (let ((ce--session-ring (make-ring 5)))
+    (let ((ce--session-ring nil))
       (ce-test--with-session "C++" nil
         (with-current-buffer ce--buffer
           (erase-buffer)

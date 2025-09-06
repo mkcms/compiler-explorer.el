@@ -101,7 +101,6 @@
 (require 'json)
 (require 'plz)
 (require 'pulse)
-(require 'ring)
 (require 'subr-x)
 (require 'url-util)
 
@@ -1067,7 +1066,7 @@ example/default is not saved."
   "Kill current session.
 If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (when (and (not skip-save-session) (ce--session-savable-p))
-    (ring-insert ce--session-ring (ce--current-session)))
+    (push (ce--current-session) ce--session-ring))
 
   ;; Abort last request and cancel the timer for recompilation.
   (with-demoted-errors "compiler-explorer--cleanup: %s"
@@ -1311,12 +1310,8 @@ This is eldoc function for compiler explorer."
   "File where sessions are persisted."
   :type 'file)
 
-(defcustom ce-sessions 5
-  "Size of the session ring."
-  :type 'integer)
-
 (defvar ce--session-ring
-  (let ((ring (make-ring ce-sessions)))
+  (let ((ring (list)))
     (ignore-errors
       (with-temp-buffer
         (insert-file-contents ce-sessions-file)
@@ -1327,12 +1322,12 @@ This is eldoc function for compiler explorer."
             (setq version 0))
           (when (> version 1)
             (error "Session file is incompatible"))
-          (dolist (e elts)
+          (dolist (e (nreverse elts))
             (setq version (plist-get e :version))
             (when (and version (> version 1))
               (setq e nil))
             (when e
-              (ring-insert ring e))))))
+              (push e ring))))))
     ring))
 
 (defun ce--current-session ()
@@ -1369,8 +1364,7 @@ describes the session contents."
 The car of each element will be a human readable string for the
 session.  The cdr will be a cons (SESSION-DATA . INDEX-IN-RING)."
   (cl-loop
-   with sessions = (ring-elements ce--session-ring)
-   for session in sessions
+   for session in ce--session-ring
    for i from 0
    collect (list (ce--stringize-session session) session i)))
 
@@ -1431,14 +1425,14 @@ It must have been created with `compiler-explorer--current-session'."
   "Save all sessions to a file."
   (let ((current-session (and (ce--active-p) (ce--current-session))))
     (when current-session
-      (ring-insert ce--session-ring current-session))
+      (push current-session ce--session-ring))
     (with-temp-file ce-sessions-file
       (insert ";; Auto-generated file; don't edit -*- mode: lisp-data -*-\n")
       (let ((print-length nil)
             (print-level nil))
         (print
          (cons 1                        ;version
-               (ring-elements ce--session-ring))
+               ce--session-ring)
          (current-buffer))))))
 
 
@@ -1911,24 +1905,25 @@ all the previous sessions one by one."
             (choice
              (completing-read "Restore session: " sessions-alist nil t)))
        (cddr (assoc choice sessions-alist)))))
-  (when (ring-empty-p ce--session-ring)
+  (unless ce--session-ring
     (error "No previous sessions"))
   (unless nth
     (setq nth 0))
-  (let ((prev (ring-remove ce--session-ring nth))
+  (let ((prev (nth nth ce--session-ring))
         (current (and (ce--session-savable-p) (ce--current-session))))
+    (setq ce--session-ring (seq-remove-at-position ce--session-ring nth))
 
     (condition-case nil
         (prog1 t
           (unwind-protect
-              (let ((ce--session-ring (make-ring 1)))
+              (let ((ce--session-ring nil))
                 ;; Override the ring to not mess with it.
                 (ce--restore-session prev))
             ;; Insert last session into the ring as the *oldest* item.  We have
             ;; to do this, otherwise we would only be able to cycle between two
             ;; sessions.
             (when current
-              (ring-insert-at-beginning ce--session-ring current))
+              (add-to-list 'ce--session-ring current 'append))
 
             ;; Redefine the menu with the ring updated (for "Restore session"
             ;; submenu)
@@ -1952,8 +1947,7 @@ Interactively, discard the current session.  With a prefix
 argument, prompt for sessions to discard."
   (interactive
    (cond
-    ((and (not (ce--active-p))
-          (ring-empty-p ce--session-ring))
+    ((and (not (ce--active-p)) (null ce--session-ring))
      (user-error "No sessions"))
     ((and (ce--active-p)
           (not current-prefix-arg))
@@ -1993,11 +1987,14 @@ argument, prompt for sessions to discard."
         (user-error "Aborted")
       (setq indices (sort (delq nil indices) #'>))
 
-      (mapc (apply-partially #'ring-remove ce--session-ring) indices)
+      (mapc (lambda (index)
+              (setq ce--session-ring
+                    (seq-remove-at-position ce--session-ring index)))
+            indices)
 
       (when current
         (ce--cleanup 'skip-save-session)
-        (unless (ring-empty-p ce--session-ring)
+        (when ce--session-ring
           (ce-previous-session))))))
 
 (defvar ce-layouts
@@ -2355,7 +2352,7 @@ The hook `compiler-explorer-hook' is always run at the end."
   (let ((buffer (get-buffer ce--buffer)))
     (cond
      (buffer (pop-to-buffer buffer) (ce--request-async))
-     ((and (not (ring-empty-p ce--session-ring)) (ce-previous-session)))
+     ((and ce--session-ring (ce-previous-session)))
      (t (call-interactively #'ce-new-session))))
   (run-hooks 'ce-hook))
 
