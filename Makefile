@@ -63,7 +63,7 @@ lint:
 	&& test -z "$$(cat $$file)"                                              \
 	&& (grep -n -E "^.{80,}" compiler-explorer.el `# Catch long lines`       \
 	    | sed                                                                \
-	  -r '1d;2d;s/^([0-9]+).*/compiler-explorer.el:\1: Too long/;q1')
+	  -r '1d;s/^([0-9]+).*/compiler-explorer.el:\1: Too long/;q1')
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
 _baremacs: ${ELC}
