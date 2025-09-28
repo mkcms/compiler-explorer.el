@@ -1,3 +1,30 @@
+2025-09-28  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.7.0
+
+	- Minimum Emacs version was bumped to 28.1 from 27.1.
+
+	- Tool support: support for compilation tools
+	(e.g. clang-tidy) has been added.  New command
+	`compiler-explorer-add-tool' will query the user for name of a
+	tool for current language and display a buffer showing the tool's
+	output.  New commands `compiler-explorer-set-tool-args' and
+	`compiler-explorer-set-tool-input' modify can be used to set the
+	arguments/standard input for the added tools.  New command
+	`compiler-explorer-remove-tool' can be used to remove a previously
+	added tool.  All of these commands can also be invoked from the
+	menu.
+
+	- The session layout is now restored when restoring a previous
+	session.  This behavior can be changed by modifying the new
+	`compiler-explorer-restore-layouts' defcustom.
+
+	- The session ring is now infinitely sized.  The previous behavior
+	was to silently remove oldest sessions from the ring when it's
+	size reached it's limit.  The variable
+	`compiler-explorer-sessions' that previously controlled the ring
+	size has been removed.
+
 2024-12-22  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.6.1
