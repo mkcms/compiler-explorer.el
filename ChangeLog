@@ -9,7 +9,7 @@
 	`compiler-explorer-add-tool' will query the user for name of a
 	tool for current language and display a buffer showing the tool's
 	output.  New commands `compiler-explorer-set-tool-args' and
-	`compiler-explorer-set-tool-input' modify can be used to set the
+	`compiler-explorer-set-tool-input' can be used to set the
 	arguments/standard input for the added tools.  New command
 	`compiler-explorer-remove-tool' can be used to remove a previously
 	added tool.  All of these commands can also be invoked from the
