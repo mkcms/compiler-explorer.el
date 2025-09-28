@@ -28,6 +28,8 @@
 (require 'ert)
 
 (defmacro ce-test--with-session (lang compiler &rest body)
+  "Evaluate BODY in with a new session using LANG and COMPILER.
+After the BODY is evaluated, the session is destroyed."
   (declare (indent 2) (debug (sexp sexp body)))
   `(let ((ce-new-session-hook '())
          (ce-response-limit-bytes 1000000000))
@@ -658,8 +660,8 @@ __attribute__((noinline)) int bar() { asm (\"\"); return -1; }
         (should (string-match-p "\\badd\\b\\|\\(\\blea\\b.*987654320\\)"
                                 (thing-at-point 'line)))))))
 
-(provide 'ce-test)
-;;; ce-test.el ends here
+(provide 'compiler-explorer-test)
+;;; compiler-explorer-test.el ends here
 
 ;; Local Variables:
 ;; indent-tabs-mode: nil

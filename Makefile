@@ -56,14 +56,16 @@ check: ${ELC}
 	      -L . -l compiler-explorer -l compiler-explorer-test                \
 	      --eval '(ert-run-tests-batch-and-exit "${SELECTOR}")'
 
-lint:
+%.lint: %.el
 	file=$$(mktemp)                                                          \
-	&& ${emacs} -Q --batch compiler-explorer.el                              \
+	&& ${emacs} -Q --batch $<                              \
 	  --eval '(checkdoc-file (buffer-file-name))' 2>&1 | tee $$file          \
 	&& test -z "$$(cat $$file)"                                              \
-	&& (grep -n -E "^.{80,}" compiler-explorer.el `# Catch long lines`       \
+	&& (grep -n -E "^.{80,}" $< `# Catch long lines`       \
 	    | sed                                                                \
-	  -r '1d;s/^([0-9]+).*/compiler-explorer.el:\1: Too long/;q1')
+	  -r '1d;s/^([0-9]+).*/'$<':\1: Too long/;q1')
+
+lint: $(FILES:.el=.lint)
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
 _baremacs: ${ELC}
