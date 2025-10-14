@@ -58,10 +58,10 @@ check: ${ELC}
 
 %.lint: %.el
 	file=$$(mktemp)                                                          \
-	&& ${emacs} -Q --batch $<                              \
+	&& ${emacs} -Q --batch $<                                                \
 	  --eval '(checkdoc-file (buffer-file-name))' 2>&1 | tee $$file          \
 	&& test -z "$$(cat $$file)"                                              \
-	&& (grep -n -E "^.{80,}" $< `# Catch long lines`       \
+	&& (grep -n -E "^.{80,}" $< `# Catch long lines`                         \
 	    | sed                                                                \
 	  -r '1d;s/^([0-9]+).*/'$<':\1: Too long/;q1')
 
