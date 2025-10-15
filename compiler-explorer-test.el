@@ -152,7 +152,7 @@ After the BODY is evaluated, the session is destroyed."
         (while (= (buffer-size) 0)
           (accept-process-output)))
       (goto-char (point-min))
-      (should (search-forward "Pushes a new function object on the stack.")))))
+      (should (search-forward "Pushes a new function object on the stack")))))
 
 (ert-deftest ce-api-examples ()
   (let ((examples (ce--examples)))
