@@ -68,7 +68,7 @@ check: ${ELC}
 lint: $(FILES:.el=.lint)
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
-_baremacs: ${ELC}
+sandbox: ${ELC}
 	rm -f test-sessions.el;                                                  \
 	${emacs} -Q ${PACKAGE_INIT} ${KEYMAP} ${TEST_ARGS}                       \
 	        -L . -l compiler-explorer -l compiler-explorer-test
