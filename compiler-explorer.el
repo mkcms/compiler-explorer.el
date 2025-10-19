@@ -246,7 +246,7 @@ sent, but the documentation is not available yet."
                     (funcall callback response)
                     (puthash key response cache))))
     (cond
-     ((and resp (plistp resp)) (funcall callback resp) t)
+     ((and resp (listp resp)) (funcall callback resp) t)
      ((eq resp t) nil)
      (t
       (setq resp
