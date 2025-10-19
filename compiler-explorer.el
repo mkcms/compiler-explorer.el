@@ -1532,6 +1532,7 @@ It must have been created with `compiler-explorer--current-session'."
   ce--local-mode-maybe-enable
   :lighter " CE"
   :keymap ce-mode-map
+  :require 'compiler-explorer
   (unless ce-mode
     (ce--cleanup)))
 

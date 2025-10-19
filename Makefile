@@ -7,13 +7,15 @@ SELECTOR ?= .*
 PACKAGE_INIT := --eval '(package-initialize)'
 TEST_ARGS := --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
 
-INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                           \
-	(unless (package-installed-p (quote plz))                                \
-	  (package-refresh-contents)                                             \
-	  (package-install (quote plz))                                          \
-	  (package-install (cadr (assoc (quote map) package-archive-contents)))  \
-	  (package-install (cadr (assoc (quote seq) package-archive-contents)))  \
-	  (package-install (cadr (assoc (quote eldoc) package-archive-contents)))))'
+INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                             \
+	(unless (package-installed-p (quote plz))                                  \
+	  (push (quote ("melpa" . "https://melpa.org/packages/")) package-archives)\
+	  (package-refresh-contents)                                               \
+	  (package-install (quote plz))                                            \
+	  (package-install (cadr (assoc (quote map) package-archive-contents)))    \
+	  (package-install (cadr (assoc (quote seq) package-archive-contents)))    \
+	  (package-install (cadr (assoc (quote eldoc) package-archive-contents)))  \
+	  (package-install (quote package-lint))))'
 
 # Sexp to fill paragraphs in the commentary section.
 FILL_COMMENTARY := --eval '(progn                                                \
@@ -40,7 +42,6 @@ KEYMAP := --eval '(dolist (elt                                                  
 	      (cons (kbd "<f2> q") (quote compiler-explorer-exit))))             \
   (global-set-key (car elt) (cdr elt)))'
 
-.PHONY: deps
 deps:
 	${emacs} -Q --batch ${INSTALL_DEPENDENCIES}
 
@@ -56,14 +57,28 @@ check: ${ELC}
 	      -L . -l compiler-explorer -l compiler-explorer-test                \
 	      --eval '(ert-run-tests-batch-and-exit "${SELECTOR}")'
 
-%.lint: %.el
-	file=$$(mktemp)                                                          \
+%.lint-checkdoc: %.el
+	@file=$$(mktemp)                                                          \
 	&& ${emacs} -Q --batch $<                                                \
 	  --eval '(checkdoc-file (buffer-file-name))' 2>&1 | tee $$file          \
-	&& test -z "$$(cat $$file)"                                              \
-	&& (grep -n -E "^.{80,}" $< `# Catch long lines`                         \
-	    | sed                                                                \
-	  -r '1d;s/^([0-9]+).*/'$<':\1: Too long/;q1')
+	&& test -z "$$(cat $$file)"
+
+%.lint-long-lines: %.el
+	@grep -n -E "^.{80,}" $< | sed -r '1d;s/^([0-9]+).*/'$<':\1: Too long/;q1'
+
+compiler-explorer.lint-package:
+	@file=$$(mktemp)                                                                  \
+	&& ${emacs} -Q --batch ${PACKAGE_INIT}                                           \
+	  -f 'package-lint-batch-and-exit' compiler-explorer.el 2>$$file || true         \
+	&& sed -i "/^Entering directory/d;/doesn't start with package's prefix/d" $$file \
+	&& cat $$file                                                                    \
+	&& test -z "$$(cat $$file)"
+
+%.lint-package: %.el
+	@true
+
+%.lint: %.el %.lint-checkdoc %.lint-long-lines %.lint-package
+	@true
 
 lint: $(FILES:.el=.lint)
 
