@@ -1481,7 +1481,10 @@ It must have been created with `compiler-explorer--current-session'."
   ;; Set the header line status to "Wait..."
   (force-mode-line-update t))
 
-(defvar ce-mode-map (make-sparse-keymap)
+(defvar ce-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [remap display-local-help] #'eldoc-doc-buffer)
+    map)
   "Keymap used in all compiler explorer buffers.")
 
 (define-minor-mode ce--local-mode
