@@ -56,6 +56,9 @@
 ;; M-x `compiler-explorer-set-input' reads a string from minibuffer that
 ;; will be used as input for the executed program.
 ;;
+;; M-x `compiler-explorer-browse-opcode-documentation' opens a website
+;; that contains the documentation for the opcode at point.
+;;
 ;; M-x `compiler-explorer-jump' jumps to ASM block for the source line at
 ;; point and vice versa.
 ;;
@@ -214,14 +217,22 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
 Keys are strings of the form \\='ISET:OPCODE\\=', where ISET is the
 compiler's :instructionSet.
 
-Values are strings, which contain the documentation for the
-opcode.  Values can also be t, which means no documentation is
-available for the key.")
+Values are plists, which contain the documentation for the opcode.
+Values can also be t, which means no documentation is available for the
+key.")
 
-(defun ce--asm-opcode-doc (instruction-set opcode callback)
+(defun ce--asm-opcode-doc (instruction-set opcode callback &optional sync)
   "Get documentation for OPCODE in INSTRUCTION-SET and call CALLBACK.
 Opcode should be a string.  INSTRUCTION-SET should be a valid
 :instructionSet of some compiler.
+
+CALLBACK is called with a plist argument.  The plist is of the
+form: (:tooltip TOOLTIP :html HTML :url URL).  TOOLTIP is the short
+documentation string.  HTML is full documentation in HTML.  URL is the
+link to get more information for the opcode.
+
+If SYNC is true, then wait until response arrives and call CALLBACK
+immediately.
 
 The return value will be:
 - nil if documentation is not available
@@ -230,20 +241,29 @@ The return value will be:
 sent, but the documentation is not available yet."
   (let* ((key (format "%s:%s" instruction-set opcode))
          (cache ce--asm-opcode-docs-cache)
-         (resp (gethash key cache)))
+         (resp (gethash key cache))
+         (handler (lambda (response)
+                    (funcall callback response)
+                    (puthash key response cache))))
     (cond
-     ((stringp resp) (funcall callback resp) t)
+     ((and resp (plistp resp)) (funcall callback resp) t)
      ((eq resp t) nil)
      (t
-      (plz 'get
-        (ce--url "asm" instruction-set opcode)
-        :headers '(("Accept" . "application/json"))
-        :then (pcase-lambda ((map :tooltip))
-                (funcall callback tooltip)
-                (puthash key tooltip cache))
-        :else (lambda (_err) (puthash key t cache))
-        :as #'ce--parse-json)
-      'async))))
+      (setq resp
+            (condition-case err
+                (plz 'get
+                  (ce--url "asm" instruction-set opcode)
+                  :headers '(("Accept" . "application/json"))
+                  :then (if sync 'sync handler)
+                  :else (lambda (_err) (puthash key t cache))
+                  :as #'ce--parse-json)
+              (plz-error
+               (puthash key t cache)
+               (or sync (signal (car err) (cdr err)))
+               nil)))
+      (if sync
+          (and resp (funcall handler resp) t)
+        'async)))))
 
 (defvar ce--examples nil)
 (defun ce--examples (&optional lang)
@@ -1297,11 +1317,11 @@ This is eldoc function for compiler explorer."
     (ce--asm-opcode-doc
      (plist-get ce--compiler-data :instructionSet)
      opcode
-     (lambda (doc)
+     (pcase-lambda ((map :tooltip))
        (funcall callback
                 (with-temp-buffer
                   (text-mode)
-                  (insert doc)
+                  (insert tooltip)
                   (fill-paragraph)
                   (buffer-string))
                 :thing opcode)))))
@@ -1593,6 +1613,28 @@ the same source line."
                  (1+ (cl-position target-ov group))
                  (length group)))
     (error "No corresponding ASM or source code block at point")))
+
+(defun ce-browse-opcode-documentation (opcode)
+  "Browse documentation for OPCODE in external browser.
+This looks up the URL for the specific opcode docs in the
+compiler-explore API and navigates to it.  Interactively, opcode is the
+symbol at point.  With a prefix argument, a symbol is read from the
+minibuffer."
+  (interactive
+   (and (or (ce--active-p) (user-error "Not in a `compiler-explorer' session"))
+        (list
+         (if current-prefix-arg
+             (read-from-minibuffer "Show opcode documentation: " )
+           (or (thing-at-point 'symbol)
+               (user-error "There is no symbol at point"))))))
+  (unless (ce--active-p)
+    (error "Not in a `compiler-explorer' session"))
+  (unless (ce--asm-opcode-doc
+           (plist-get ce--compiler-data :instructionSet)
+           opcode
+           (pcase-lambda ((map :url)) (browse-url-xdg-open url))
+           'sync)
+    (error "No documentation for %s" opcode)))
 
 (defun ce-set-input (input)
   "Set the input to use as stdin for execution to INPUT, a string."

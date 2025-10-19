@@ -133,9 +133,9 @@ After the BODY is evaluated, the session is destroyed."
   (with-temp-buffer
     (let ((buf (current-buffer)))
       (ce--asm-opcode-doc "amd64" "pushq"
-                          (lambda (doc)
+                          (pcase-lambda ((map :tooltip))
                             (with-current-buffer buf
-                              (insert doc))))
+                              (insert tooltip))))
       (with-timeout (5 (error "Test timed out"))
         (while (= (buffer-size) 0)
           (accept-process-output)))
@@ -145,9 +145,9 @@ After the BODY is evaluated, the session is destroyed."
   (with-temp-buffer
     (let ((buf (current-buffer)))
       (ce--asm-opcode-doc "python" "MAKE_FUNCTION"
-                          (lambda (doc)
+                          (pcase-lambda ((map :tooltip))
                             (with-current-buffer buf
-                              (insert doc))))
+                              (insert tooltip))))
       (with-timeout (5 (error "Test timed out"))
         (while (= (buffer-size) 0)
           (accept-process-output)))
