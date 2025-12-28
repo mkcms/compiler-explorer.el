@@ -5,7 +5,9 @@ ELC := $(FILES:.el=.elc)
 SELECTOR ?= .*
 
 PACKAGE_INIT := --eval '(package-initialize)'
-TEST_ARGS := --eval '(setq compiler-explorer-sessions-file "test-sessions.el")'
+SESSIONS_FILE := $$PWD/test-sessions.el
+TEST_ARGS := $(shell printf "%s '(setq compiler-explorer-sessions-file \"%s\")'" \
+	       --eval ${SESSIONS_FILE})
 
 INSTALL_DEPENDENCIES := ${PACKAGE_INIT} --eval '(progn                             \
 	(unless (package-installed-p (quote plz))                                  \
@@ -84,7 +86,6 @@ lint: $(FILES:.el=.lint)
 
 # Run emacs -Q with packages installed and compiler-explorer loaded
 sandbox: ${ELC}
-	rm -f test-sessions.el;                                                  \
 	${emacs} -Q ${PACKAGE_INIT} ${KEYMAP} ${TEST_ARGS}                       \
 	        -L . -l compiler-explorer -l compiler-explorer-test
 

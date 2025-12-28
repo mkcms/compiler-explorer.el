@@ -1457,6 +1457,7 @@ It must have been created with `compiler-explorer--current-session'."
 
 (defun ce--save-sessions ()
   "Save all sessions to a file."
+  (remove-hook 'kill-emacs-hook #'ce--save-sessions)
   (let ((current-session (and (ce--active-p) (ce--current-session))))
     (when current-session
       (push current-session ce--session-ring))
@@ -1543,6 +1544,7 @@ It must have been created with `compiler-explorer--current-session'."
   :lighter " CE"
   :keymap ce-mode-map
   :require 'compiler-explorer
+  (add-hook 'kill-emacs-hook #'ce--save-sessions)
   (unless ce-mode
     (ce--cleanup)))
 
@@ -2420,8 +2422,6 @@ The hook `compiler-explorer-hook' is always run at the end."
      ((and ce--session-ring (ce-previous-session)))
      (t (call-interactively #'ce-new-session))))
   (run-hooks 'ce-hook))
-
-(add-hook 'kill-emacs-hook #'ce--save-sessions)
 
 (provide 'compiler-explorer)
 ;;; compiler-explorer.el ends here
