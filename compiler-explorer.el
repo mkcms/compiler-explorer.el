@@ -1422,7 +1422,17 @@ It must have been created with `compiler-explorer--current-session'."
                                                       (consp obj)
                                                       (vectorp obj))))))
       (unless (funcall pred val)
-        (error "Invalid %s: %s" sym val)))
+        (error "Invalid %S: %s" sym val)))
+    (dolist (elt libs)
+      (unless (and (consp elt)
+                   (stringp (car elt))
+                   (stringp (cdr elt)))
+        (error "Invalid library: %s" elt)))
+    (dolist (elt tools)
+      (unless (and (listp elt)
+                   (= 3 (length elt))
+                   (cl-every #'stringp elt))
+        (error "Invalid tool: %s" elt)))
 
     (let ((ce--inhibit-request t))
       (ce-new-session lang-name compiler)
@@ -1960,15 +1970,17 @@ all the previous sessions one by one."
   (unless nth
     (setq nth 0))
   (let ((prev (nth nth ce--session-ring))
-        (current (and (ce--session-savable-p) (ce--current-session))))
+        (current (and (ce--session-savable-p) (ce--current-session)))
+        (success nil))
     (setq ce--session-ring (seq-remove-at-position ce--session-ring nth))
 
-    (condition-case nil
+    (condition-case err
         (prog1 t
           (unwind-protect
               (let ((ce--session-ring nil))
                 ;; Override the ring to not mess with it.
-                (ce--restore-session prev))
+                (ce--restore-session prev)
+                (setq success t))
             ;; Insert last session into the ring as the *oldest* item.  We have
             ;; to do this, otherwise we would only be able to cycle between two
             ;; sessions.
@@ -1977,11 +1989,14 @@ all the previous sessions one by one."
 
             ;; Redefine the menu with the ring updated (for "Restore session"
             ;; submenu)
-            (ce--define-menu)))
+            (when success
+              (ce--define-menu))))
       (error
        (ce--cleanup 'skip-save-session)
        (display-warning
-        'compiler-explorer "Previous session appears to be corrupt" :warning)
+        'compiler-explorer
+        (format "Previous session is corrupt: %s" (error-message-string err))
+        :warning)
        nil))))
 
 (defun ce-discard-session (&optional indices interactive)
