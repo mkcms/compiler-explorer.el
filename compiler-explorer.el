@@ -4,7 +4,7 @@
 
 ;; Author: Michał Krzywkowski <k.michal@zoho.com>
 ;; Keywords: c, tools
-;; Version: 0.7.0
+;; Version: 0.8.0
 ;; Homepage: https://github.com/mkcms/compiler-explorer.el
 ;; Package-Requires: ((emacs "28.1")
 ;;                    (plz "0.9")

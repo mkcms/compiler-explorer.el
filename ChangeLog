@@ -1,3 +1,21 @@
+2025-12-28  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.8.0
+
+	- New command `compiler-explorer-browse-opcode-documentation'
+	opens a website that contains the documentation for the opcode at
+	point.
+
+	- ElDoc integration: Doing `C-h .' (`display-local-help') in the
+	ASM buffer will now pop up a buffer showing the documentation for
+	opcode at point.
+
+	- Fixed an issue whre sessions were sometimes not properly
+	persisted on Emacs exit.
+
+	- A detailed error message is now displayed in case restoring a
+	previous session fails.
+
 2025-09-28  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.7.0
