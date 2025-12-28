@@ -27,8 +27,11 @@ FILL_COMMENTARY := --eval '(progn                                               
 	  (search-forward "Code:"))                                              \
 	  (goto-char (point-min))                                                \
 	(while (re-search-forward "^;; *." nil t)                                \
-	  (fill-paragraph)                                                       \
-	  (end-of-line))                                                         \
+	  (goto-char (line-beginning-position))                                  \
+	  (if (looking-at-p "^;;  +")                                            \
+	      (forward-line 1)                                                   \
+	    (fill-paragraph)                                                     \
+	    (end-of-line)))                                                      \
 	(save-buffer))'
 
 KEYMAP := --eval '(dolist (elt                                                   \
@@ -91,15 +94,18 @@ sandbox: ${ELC}
 
 readme-to-el:
 	sed README.md -r                                                         \
-	    -e 's/^#+ (.*) #*$$/\n;;; \1/'      `# Rewrite headers`              \
-	    -e '/^.*License.*/,/^<!/d'          `# Delete license`               \
-	    -e '/^<!--/d'                       `# Remove comments`              \
-	    -e 's/^/;; /'                       `# Add lisp comment char`        \
-	    -e 's/`M-x ([^`]+)`/M-x `\1'"'"'/g' `# Elisp backticks`              \
-	    -e 's/Emacs package/Package/g'      `# It's obviously for Emacs`     \
+	    -e 's/^#+ (.*) #*$$/\n;;; \1/'       `# Rewrite headers`             \
+	    -e '/^.*License.*/,/^<!/d'           `# Delete license`              \
+	    -e '/^<!--/d'                        `# Remove comments`             \
+	    -e '/```elisp/,/^```/ s/(.*)/  \1/'  `# Indent code`                 \
+	    -e 's/^/;; /'                        `# Add lisp comment char`       \
+	    -e 's/`M-x ([^`]+)`/M-x `\1'"'"'/g'  `# Elisp backticks`             \
+	    -e 's/`([^`]+)`/`\1'"'"'/g'          `# Elisp backticks`             \
+	    -e 's/Emacs package/Package/g'       `# It's obviously for Emacs`    \
 	    -e 's/(\[compiler[- ]explorer\]){2,}/https:\/\/godbolt.org/g'        \
 	    -e '/^;* \[compiler-explorer/d'                                      \
 	    >  commentary.txt                                                    \
+	&& sed -i commentary.txt -r -e '/^;; +```/d'                             \
 	&& ( sed '1,/^;;; Commentary:/p;d' compiler-explorer.el                  \
 	&& echo && cat commentary.txt && echo                                    \
 	&& sed '/^;;; Code:/,//p;d' compiler-explorer.el ) > changed.txt         \
