@@ -28,12 +28,12 @@
 ;;; Commentary:
 
 ;;
-;;; compiler-explorer.el
+;; * compiler-explorer.el
 ;;
 ;; Package that provides a client for https://godbolt.org service.
 ;;
 ;;
-;;; Usage
+;;; ** Usage
 ;;
 ;; M-x `compiler-explorer' is the main entry point.  It will ask you for a
 ;; language and display source&compilation buffers.  Type something in the
@@ -42,7 +42,7 @@
 ;; executed program.
 ;;
 ;;
-;;; Compilation
+;; *** Compilation
 ;;
 ;; M-x `compiler-explorer-set-compiler' changes the compiler for current
 ;; session.
@@ -54,7 +54,7 @@
 ;; removes them.
 ;;
 ;;
-;;; Execution
+;; *** Execution
 ;;
 ;; M-x `compiler-explorer-set-execution-args' sets the arguments for the
 ;; executed program.
@@ -63,7 +63,7 @@
 ;; will be used as input for the executed program.
 ;;
 ;;
-;;; Session management
+;; *** Session management
 ;;
 ;; M-x `compiler-explorer-new-session' kills the current session and
 ;; creates a new one, asking for source language.
@@ -77,7 +77,7 @@
 ;; M-x `compiler-explorer-exit' kills the current session.
 ;;
 ;;
-;;; ASM
+;; *** ASM
 ;;
 ;; M-x `compiler-explorer-browse-opcode-documentation' opens a website
 ;; that contains the documentation for the opcode at point.
@@ -86,7 +86,7 @@
 ;; point and vice versa.
 ;;
 ;;
-;;; Tools
+;; *** Tools
 ;;
 ;; M-x `compiler-explorer-add-tool' asks for the name of a tool, adds it
 ;; to current compilation and displays a new buffer showing the tool's
@@ -103,7 +103,7 @@
 ;;
 ;;
 ;;
-;;; Other commands
+;; *** Other commands
 ;;
 ;; M-x `compiler-explorer-load-example' prompts for a name of a builtin
 ;; example and loads it.
@@ -116,12 +116,14 @@
 ;;
 ;; M-x `compiler-explorer-layout' cycles between different layouts.
 ;;
-;; ## Customization
+;;
+;;; ** Customization
 ;;
 ;; Additional customization is possible via M-x `customize-group'
 ;; `compiler-explorer'.
 ;;
-;; ### Usage with language servers
+;;
+;; *** Usage with language servers
 ;;
 ;; The following snippet sets up the built-in eglot package to start a
 ;; language server for each session, and to automatically create and

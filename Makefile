@@ -94,7 +94,9 @@ sandbox: ${ELC}
 
 readme-to-el:
 	sed README.md -r                                                         \
-	    -e 's/^#+ (.*) #*$$/\n;;; \1/'       `# Rewrite headers`             \
+	    -e 's/^### (.*) #*$$/\n;; *** \1/'   `# Rewrite headers`             \
+	    -e 's/^## (.*) #*$$/\n;;; ** \1/'    `# Rewrite headers`             \
+	    -e 's/^#+ (.*) #*$$/\n;; * \1/'      `# Rewrite headers`             \
 	    -e '/^.*License.*/,/^<!/d'           `# Delete license`              \
 	    -e '/^<!--/d'                        `# Remove comments`             \
 	    -e '/```elisp/,/^```/ s/(.*)/  \1/'  `# Indent code`                 \
