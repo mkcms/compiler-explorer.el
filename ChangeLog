@@ -10,7 +10,7 @@
 	ASM buffer will now pop up a buffer showing the documentation for
 	opcode at point.
 
-	- Fixed an issue whre sessions were sometimes not properly
+	- Fixed an issue where sessions were sometimes not properly
 	persisted on Emacs exit.
 
 	- A detailed error message is now displayed in case restoring a
