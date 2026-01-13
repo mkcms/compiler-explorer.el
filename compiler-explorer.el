@@ -1758,21 +1758,24 @@ execution."
       (get-text-property (point) 'ce-compiler-id)
       (let* ((lang ce--language-data)
              (default (plist-get lang :defaultCompiler))
-             (compilers (mapcar
-                         (pcase-lambda ((map :name :id :supportsExecute :lang))
-                           (list name id supportsExecute lang))
-                         (ce--compilers))))
+             (compilers
+              (seq-filter
+               (pcase-lambda (`(_ _ ,supports-execute ,lang-id))
+                 (and
+                  ;; Only compilers for current language
+                  (string= lang-id (plist-get lang :id))
+                  (or (not current-prefix-arg)
+                      (eq t supports-execute))))
+               (mapcar
+                (pcase-lambda ((map :name :id :supportsExecute :lang))
+                  (list name id supportsExecute lang))
+                (ce--compilers)))))
         (completing-read (concat "Compiler"
                                  (when current-prefix-arg " (with execution)")
                                  ": ")
-                         compilers
-                         (pcase-lambda (`(_ _ ,supports-execute ,lang-id))
-                           (and
-                            ;; Only compilers for current language
-                            (string= lang-id (plist-get lang :id))
-                            (or (not current-prefix-arg)
-                                (eq t supports-execute))))
-                         t
+                         ;; Note: keep PREDICATE nil to work around some subtle
+                         ;; bugs in `test-completion' (gh#6)
+                         compilers nil t
                          (car (cl-find default compilers
                                        :test #'string= :key #'cadr))))))))
   (unless (ce--active-p)
