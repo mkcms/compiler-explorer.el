@@ -1658,12 +1658,18 @@ It must have been created with `compiler-explorer--current-session'."
        (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
        (eldoc-mode +1)))
     ((pred (equal ce--output-buffer))
-     (setq-local compilation-parse-errors-filename-function
+     (setq-local compile-command '(progn (compiler-explorer--request-async)
+                                         "true")
+                 compilation-arguments nil
+                 compilation-parse-errors-filename-function
                  #'ce--compilation-parse-errors-filename))
     ((pred (equal ce--exe-output-buffer))
      (setq header-line-format `(:eval (ce--header-line-format-executor))))
     ((guard (ce--tool-id))
-     (setq-local compilation-parse-errors-filename-function
+     (setq-local compile-command '(progn (compiler-explorer--request-async)
+                                         "true")
+                 compilation-arguments nil
+                 compilation-parse-errors-filename-function
                  #'ce--compilation-parse-errors-filename)
      (setq header-line-format `(:eval (ce--header-line-format-tool))))))
 
