@@ -1,3 +1,41 @@
+2026-03-25  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.9.0
+
+	- The colors of the source/ASM mapping overlays can now be
+	customized to make their colors lighter than the default
+	background color by some percentage.  Previously they could only
+	be made darker.
+
+	- Fixed an issue where it was sometimes impossible to
+	interactively select a compiler with some completion packages due
+	to Emacs bug 80103. (GH#6)
+
+	- Tool names are now displayed where possible instead of their ids
+	after the upstream issue (compiler-explorer#8399) was fixed.
+
+	- Attempting to restore unsupported session types (missing
+	compiler, too many executors) from some shortlinks is now properly
+	handled.
+
+	- The tool output buffers now have `compilation-mode' set by
+	default in order to be able to use Emacs `compile' machinery to
+	parse and navigate issues that are reported by the tools.  The
+	tool buffers now also recognize ANSI escape codes in the tool's
+	output.
+
+	- New hooks added: `compiler-explorer-post-compilation-hook',
+	`compiler-explorer-post-tool-update-hook',
+	`compiler-explorer-post-execution-hook',
+	`compiler-explorer-pre-cleanup-hook',
+	`compiler-explorer-tool-added-hook',
+	`compiler-explorer-tool-removed-hook'.
+
+	- A few internal functions were made public for easier
+	programmability.
+
+	- A few other small fixes.
+
 2025-12-28  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.8.0
