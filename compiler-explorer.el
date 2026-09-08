@@ -2343,8 +2343,8 @@ Interactively, this prompts for an example to load for the current language."
   (unless (ce-active-p)
     (error "Not in a `compiler-explorer' session"))
   (if-let* ((lang (plist-get ce--language-data :id))
-            (all (ce--examples lang))
-            (data (cdr (assoc example all))))
+            (all-examples (ce--examples lang))
+            (data (cdr (assoc example all-examples))))
       (with-temp-buffer
         (insert (plist-get (ce--example lang (plist-get data :file)) :file))
         (ce--replace-buffer-contents (get-buffer ce--buffer) (current-buffer)))
