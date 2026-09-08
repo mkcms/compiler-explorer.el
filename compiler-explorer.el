@@ -224,44 +224,41 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
 (defvar ce--languages nil)
 (defun ce--languages ()
   "Get all languages."
-  (or ce--languages
-      (setq ce--languages
-            (ce--request-sync
-             "Fetching list of languages"
-             (ce--url
-              "languages"
-              `(("fields" . ,(string-join '("id" "name" "extensions" "example"
-                                            "defaultCompiler")
-                                          ","))))))))
+  (with-memoization ce--languages
+    (ce--request-sync
+     "Fetching list of languages"
+     (ce--url
+      "languages"
+      `(("fields" . ,(string-join '("id" "name" "extensions" "example"
+                                    "defaultCompiler")
+                                  ",")))))))
 
 (defvar ce--compilers nil)
 (defun ce--compilers ()
   "Get all compilers."
-  (or ce--compilers
-      (setq ce--compilers
-            (ce--request-sync
-             "Fetching list of compilers"
-             (ce--url
-              "compilers"
-              `(("fields" . ,(string-join '("id" "lang" "name" "groupName"
-                                            "instructionSet"
-                                            "supportsExecute"
-                                            "supportsBinary"
-                                            "supportsBinaryObject"
-                                            "supportsLibraryCodeFilter"
-                                            "supportsDemangle"
-                                            "supportsIntel"
-                                            "disabledFilters")
-                                          ","))))))))
+  (with-memoization ce--compilers
+    (ce--request-sync
+     "Fetching list of compilers"
+     (ce--url
+      "compilers"
+      `(("fields" . ,(string-join '("id" "lang" "name" "groupName"
+                                    "instructionSet"
+                                    "supportsExecute"
+                                    "supportsBinary"
+                                    "supportsBinaryObject"
+                                    "supportsLibraryCodeFilter"
+                                    "supportsDemangle"
+                                    "supportsIntel"
+                                    "disabledFilters")
+                                  ",")))))))
 
 (defvar ce--libraries (make-hash-table :test #'equal))
 (defun ce--libraries (id)
   "Get available libraries for language ID."
-  (or (map-elt ce--libraries id)
-      (setf (map-elt ce--libraries id)
-            (ce--request-sync
-             (format "Fetching %S libraries" id)
-             (ce--url "libraries" id)))))
+  (with-memoization (map-elt ce--libraries id)
+    (ce--request-sync
+     (format "Fetching %S libraries" id)
+     (ce--url "libraries" id))))
 
 (defvar ce--asm-opcode-docs-cache
   (make-hash-table :test #'equal)
@@ -324,11 +321,10 @@ sent, but the documentation is not available yet."
 Keys are example names, values are example objects as returned by the API.
 If LANG is non-nil, return only examples for language with that id."
   (let ((examples
-         (or ce--examples
-             (setq ce--examples
-                   (ce--request-sync
-                    (format "Fetching %S examples" (or lang "all"))
-                    (concat ce-url "/source/builtin/list"))))))
+         (with-memoization ce--examples
+           (ce--request-sync
+            "Fetching all examples"
+            (concat ce-url "/source/builtin/list")))))
     (remq 'none
           (mapcar
            (lambda (example)
@@ -344,25 +340,20 @@ Values are the example objects from API.")
 (defun ce--example (lang file)
   "Get a single example FILE in LANG."
   (let ((key (format "%s:%s" lang file)))
-    (or (map-elt ce--cached-example-data key)
-        (setf
-         (map-elt ce--cached-example-data key)
-         (ce--request-sync
-          (format "Fetching %S example %s" lang file)
-          (concat
-           ce-url "/source/builtin/load/" lang "/" file))))))
+    (with-memoization (map-elt ce--cached-example-data key)
+      (ce--request-sync
+       (format "Fetching %S example %s" lang file)
+       (concat
+        ce-url "/source/builtin/load/" lang "/" file)))))
 
 (defvar ce--tools nil)
 (defun ce--tools (lang)
   "Get a list of tools for given LANG."
-  (if (assoc lang ce--tools)
-      (map-elt ce--tools lang)
-    (setf
-     (map-elt ce--tools lang)
-     (seq-map (lambda (elt) (cons (plist-get elt :id) elt))
-              (ce--request-sync
-               (format "Fetching %S tools" (or lang "all"))
-               (ce--url "tools" lang))))))
+  (with-memoization (map-elt ce--tools lang)
+    (seq-map (lambda (elt) (cons (plist-get elt :id) elt))
+             (ce--request-sync
+              (format "Fetching %S tools" (or lang "all"))
+              (ce--url "tools" lang)))))
 
 
 ;; Compilation
