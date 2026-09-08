@@ -6,7 +6,7 @@
 ;; Keywords: c, tools
 ;; Version: 0.9.0
 ;; Homepage: https://github.com/mkcms/compiler-explorer.el
-;; Package-Requires: ((emacs "28.1")
+;; Package-Requires: ((emacs "29.1")
 ;;                    (plz "0.9")
 ;;                    (eldoc "1.15.0")
 ;;                    (map "3.3.1")
