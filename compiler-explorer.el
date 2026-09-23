@@ -85,6 +85,13 @@
 ;; M-x `compiler-explorer-jump' jumps to ASM block for the source line at
 ;; point and vice versa.
 ;;
+;; M-x `compiler-explorer-show-device' opens a buffer showing device code,
+;; such as CUDA PTX or SASS, for the selected target.
+;;
+;; M-x `compiler-explorer-set-device' selects what is shown in the device
+;; output buffer, such as CUDA PTX or SASS for a particular GPU
+;; architecture.
+;;
 ;;
 ;; *** Tools
 ;;
@@ -248,6 +255,7 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
                                     "supportsExecute"
                                     "supportsBinary"
                                     "supportsBinaryObject"
+                                    "supportsDeviceAsmView"
                                     "supportsLibraryCodeFilter"
                                     "supportsDemangle"
                                     "supportsIntel"
@@ -370,6 +378,9 @@ Values are the example objects from API.")
 (defconst ce--compiler-buffer "*compiler-explorer compilation*"
   "Buffer with ASM code.")
 
+(defconst ce--device-buffer "*compiler-explorer device*"
+  "Buffer with device code.")
+
 (defconst ce--output-buffer "*compiler-explorer output*"
   "Combined compiler stdout&stderr.")
 
@@ -385,6 +396,12 @@ Values are the example objects from API.")
 
 (defvar ce--compiler-data nil
   "Compiler data for current session.")
+
+(defvar ce--device-outputs nil
+  "Alist of device target names and compilation results.")
+
+(defvar ce--selected-device nil
+  "Name of the device target shown in the device buffer.")
 
 (defvar ce--selected-libraries nil
   "Alist of libraries for current session.
@@ -631,11 +648,56 @@ The ASM buffer is current when this hook runs.")
 The hook is called with a single argument that contains the tool ID.
 The tool buffer is current when this hook runs.")
 
+(defvar ce-post-device-update-hook nil
+  "Hook run after rendering device output, including empty output.
+Each function receives the selected target name or nil.
+The device buffer is current when this hook runs.")
+
+(defvar ce-params-change-hook)
+(defun ce--select-device (name)
+  "Set device target NAME and notify parameter hooks."
+  (unless (equal ce--selected-device name)
+    (setq ce--selected-device name)
+    (run-hook-with-args 'ce-params-change-hook 'device name)))
+
+(defun ce--update-devices (devices)
+  "Update the device output buffer from DEVICES."
+  (setq ce--device-outputs
+        (cl-loop for (name result) on devices by #'cddr
+                 collect (cons (substring (symbol-name name) 1) result)))
+  (when (and ce--device-outputs
+             (not (assoc ce--selected-device ce--device-outputs)))
+    (ce--select-device (caar ce--device-outputs)))
+  (ce--render-device))
+
+(defun ce--render-device ()
+  "Display the selected device target from the latest compilation."
+  (when-let* ((buffer (get-buffer ce--device-buffer)))
+    (with-temp-buffer
+      (if-let* ((device (assoc ce--selected-device ce--device-outputs)))
+          (let* ((result (cdr device))
+                 (asm (plist-get result :asm)))
+            (if (seq-empty-p asm)
+                (insert "<No device code>\n")
+              (seq-do (pcase-lambda ((map :text)) (insert text "\n"))
+                      asm))
+            (seq-do (pcase-lambda ((map :text)) (insert text "\n"))
+                    (seq-concatenate 'list
+                                     (plist-get result :stdout)
+                                     (plist-get result :stderr))))
+        (insert "<No device output>\n"))
+      (ce--replace-buffer-contents buffer (current-buffer)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (ansi-color-apply-on-region (point-min) (point-max)))
+      (run-hook-with-args 'ce-post-device-update-hook ce--selected-device))
+    (force-mode-line-update t)))
+
 (defvar ce-document-opcodes)
 (defvar ce-source-to-asm-mappings)
 (defun ce--handle-compilation-response (response)
   "Handle compilation response contained in RESPONSE."
-  (pcase-let (((map :asm :stdout :stderr :code :tools) response)
+  (pcase-let (((map :asm :stdout :stderr :code :tools :devices) response)
               (compiler (get-buffer ce--compiler-buffer))
               (output (get-buffer ce--output-buffer))
               (source-to-asm-mappings nil))
@@ -655,6 +717,8 @@ The tool buffer is current when this hook runs.")
 
       (when ce-source-to-asm-mappings
         (ce--build-overlays source-to-asm-mappings)))
+
+    (ce--update-devices devices)
 
     ;; Update output buffer
     (with-current-buffer output
@@ -897,6 +961,18 @@ output buffer."
                            map)
                  'help-echo "mouse-1: Set arguments")))
 
+(defun ce--header-line-format-device ()
+  "Get the header line for the device output buffer."
+  `((:eval (ce--header-line-format-common))
+    " | Device: "
+    ,(propertize
+      (or ce--selected-device "none")
+      'mouse-face 'header-line-highlight
+      'keymap (let ((map (make-keymap)))
+                (define-key map [header-line mouse-1] #'ce-set-device)
+                map)
+      'help-echo "mouse-1: Select device target")))
+
 (defun ce--header-line-format-executor ()
   "Get mode line construct for displaying header line in execution buffers."
   `(
@@ -1122,6 +1198,19 @@ output buffer."
          (setq ce-source-to-asm-mappings (not ce-source-to-asm-mappings))
          (ce--request-async))
        :style toggle :selected ce-source-to-asm-mappings]
+      ["Show device" ce-show-device
+       :enable (eq t (plist-get ce--compiler-data :supportsDeviceAsmView))]
+      ("Select device target"
+       :enable ce--device-outputs
+       :filter
+       ,(lambda (_items)
+          (mapcar
+           (pcase-lambda (`(,name . ,_))
+             (vector name
+                     (lambda () (interactive) (ce-set-device name))
+                     :style 'radio
+                     :selected (equal name ce--selected-device)))
+           ce--device-outputs)))
       ["Next layout" ce-layout]
       ["Copy link to this session" ce-make-link]
       "--"
@@ -1157,6 +1246,8 @@ WINDOW if nil defaults to the frame's root window."
        'source)
       ((pred (eq (get-buffer ce--compiler-buffer)))
        'asm)
+      ((pred (eq (get-buffer ce--device-buffer)))
+       'device)
       ((pred (eq (get-buffer ce--output-buffer)))
        'output)
       ((pred (eq (get-buffer ce--exe-output-buffer)))
@@ -1231,6 +1322,7 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
                     (kill-buffer (current-buffer))))))))
         (cl-list* (get-buffer ce--buffer)
                   (get-buffer ce--compiler-buffer)
+                  (get-buffer ce--device-buffer)
                   (get-buffer ce--output-buffer)
                   (get-buffer ce--exe-output-buffer)
                   (mapcar #'cadr ce--selected-tools)))
@@ -1239,6 +1331,8 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
   (setq ce--recompile-timer nil)
   (setq ce--last-exe-request nil)
   (setq ce--compiler-data nil)
+  (setq ce--device-outputs nil)
+  (setq ce--selected-device nil)
   (setq ce--selected-libraries nil)
   (setq ce--selected-tools nil)
   (setq ce--language-data nil)
@@ -1448,17 +1542,28 @@ This allows navigating to errors in source code from that buffer."
     (file-name-nondirectory fname)))
 
 (defcustom ce-document-opcodes t
-  "If non-nil, provide documentation for opcodes in ASM buffers.
+  "If non-nil, provide documentation for opcodes in ASM and device buffers.
 This uses `eldoc' to output documentation for opcodes at point in
 the minibuffer and separate help buffers."
   :type 'boolean)
 
+(defun ce--instruction-set ()
+  "Return the instruction set for the current buffer."
+  ;; For the regular compiler buffer, get the instruction set from the
+  ;; compiler data. For device output, use the first word of the target name,
+  ;; as Compiler Explorer does.
+  (if (equal (buffer-name) ce--device-buffer)
+      (when-let* ((device (assoc ce--selected-device ce--device-outputs))
+                  (instruction-set (car (split-string (car device)))))
+        (downcase instruction-set))
+    (plist-get ce--compiler-data :instructionSet)))
+
 (defun ce--compilation-eldoc-documentation-function (callback)
-  "Call CALLBACK with the documentation for opcode at point.
-This is eldoc function for compiler explorer."
-  (when-let* ((opcode (thing-at-point 'symbol)))
+  "Call CALLBACK with the documentation for the opcode at point."
+  (when-let* ((instruction-set (ce--instruction-set))
+              (opcode (thing-at-point 'symbol)))
     (ce--asm-opcode-doc
-     (plist-get ce--compiler-data :instructionSet)
+     instruction-set
      opcode
      (pcase-lambda ((map :tooltip))
        (funcall callback
@@ -1503,6 +1608,7 @@ This is eldoc function for compiler explorer."
     :version 1
     :lang-name ,(plist-get ce--language-data :name)
     :compiler ,(plist-get ce--compiler-data :id)
+    :device ,ce--selected-device
     :libs ,(mapcar (pcase-lambda (`(,id ,vid ,_)) (cons id vid))
                    ce--selected-libraries)
     :tools ,(mapcar (pcase-lambda (`(,id ,_ ,args ,stdin))
@@ -1543,8 +1649,8 @@ session.  The cdr will be a cons (SESSION-DATA . INDEX-IN-RING)."
   "Restore serialized SESSION.
 It must have been created with `compiler-explorer--current-session'."
   (pcase-let
-      (((map :version :lang-name :compiler :libs :tools :args :exe-args :input
-             :source :layout)
+      (((map :version :lang-name :compiler :device :libs :tools :args
+             :exe-args :input :source :layout)
         session))
     (or version (setq version 0))
     (when (> version 1)
@@ -1552,6 +1658,10 @@ It must have been created with `compiler-explorer--current-session'."
     (pcase-dolist (`(,sym ,val ,pred) `((version ,version integerp)
                                         (lang-name ,lang-name stringp)
                                         (compiler ,compiler stringp)
+                                        (device ,device
+                                                (lambda (obj)
+                                                  (or (null obj)
+                                                      (stringp obj))))
                                         (libs ,libs listp)
                                         (tools ,tools listp)
                                         (args ,args stringp)
@@ -1579,6 +1689,7 @@ It must have been created with `compiler-explorer--current-session'."
 
     (let ((ce--inhibit-request t))
       (ce-new-session lang-name compiler)
+      (ce--select-device device)
       (with-current-buffer (get-buffer ce--buffer)
         (let ((inhibit-modification-hooks t))
           (erase-buffer)
@@ -1654,6 +1765,13 @@ It must have been created with `compiler-explorer--current-session'."
                  'ce--compilation-eldoc-documentation-function nil t)
        (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
        (eldoc-mode +1)))
+    ((pred (equal ce--device-buffer))
+     (setq header-line-format '(:eval (ce--header-line-format-device)))
+     (when ce-document-opcodes
+       (add-hook 'eldoc-documentation-functions
+                 'ce--compilation-eldoc-documentation-function nil t)
+       (setq-local eldoc-documentation-function 'eldoc-documentation-compose)
+       (eldoc-mode +1)))
     ((pred (equal ce--output-buffer))
      (setq-local compile-command '(progn (compiler-explorer--request-async)
                                          "true")
@@ -1675,6 +1793,7 @@ It must have been created with `compiler-explorer--current-session'."
   (when (memq (current-buffer)
               (cl-list* (get-buffer ce--buffer)
                         (get-buffer ce--compiler-buffer)
+                        (get-buffer ce--device-buffer)
                         (get-buffer ce--output-buffer)
                         (get-buffer ce--exe-output-buffer)
                         (mapcar #'cadr ce--selected-tools)))
@@ -1697,19 +1816,61 @@ It must have been created with `compiler-explorer--current-session'."
     (error "Not in a `compiler-explorer' session"))
   (display-buffer ce--output-buffer))
 
+(defun ce--device-buffer ()
+  "Return the device output buffer and create it if needed."
+  (or (get-buffer ce--device-buffer)
+      (let ((buffer (get-buffer-create ce--device-buffer)))
+        (with-current-buffer buffer
+          (asm-mode)
+          (setq buffer-read-only t
+                buffer-undo-list t
+                truncate-lines t)
+          (ce--local-mode +1))
+        (ce--render-device)
+        (ce--request-async)
+        buffer)))
+
+(defun ce-show-device ()
+  "Show device code for the current compilation."
+  (interactive)
+  (unless (ce-active-p)
+    (user-error "Not in a `compiler-explorer' session"))
+  (unless (eq t (plist-get ce--compiler-data :supportsDeviceAsmView))
+    (user-error "Compiler does not support device output"))
+  (display-buffer (ce--device-buffer)))
+
+(defun ce-set-device (name)
+  "Select device target NAME from the latest compilation."
+  (interactive
+   (progn
+     (unless (ce-active-p)
+       (user-error "Not in a `compiler-explorer' session"))
+     (unless ce--device-outputs
+       (user-error "No device output available"))
+     (list (completing-read "Device target: " ce--device-outputs nil t
+                            nil nil ce--selected-device))))
+  (unless (ce-active-p)
+    (user-error "Not in a `compiler-explorer' session"))
+  (unless (assoc name ce--device-outputs)
+    (user-error "No output for device target %S" name))
+  (ce--select-device name)
+  (ce--render-device)
+  (ce-show-device))
+
 (defvar ce-params-change-hook nil
   "Hook called when parameters change.
 Each function is called with two arguments: WHAT and VALUE.  WHAT
 is a symbol, either:
  - `input'
  - `compiler'
+ - `device'
  - `compiler-args'
  - `execution-args'
  - `tool-args'
  - `tool-input'
 
-VALUE is the new value, a string; or a cons cell (ID . STRING) for
-tool-* changes.")
+VALUE is the new value, a string or a cons cell (ID . STRING) for
+tool-* changes.  For `device', VALUE may also be nil.")
 
 (defun ce-jump (&optional which)
   "Jump to corresponding ASM block or source code line.
@@ -1787,12 +1948,13 @@ minibuffer."
                (user-error "There is no symbol at point"))))))
   (unless (ce-active-p)
     (error "Not in a `compiler-explorer' session"))
-  (unless (ce--asm-opcode-doc
-           (plist-get ce--compiler-data :instructionSet)
-           opcode
-           (pcase-lambda ((map :url)) (browse-url-xdg-open url))
-           'sync)
-    (error "No documentation for %s" opcode)))
+  (let ((instruction-set (ce--instruction-set)))
+    (unless (and instruction-set
+                 (ce--asm-opcode-doc
+                  instruction-set opcode
+                  (pcase-lambda ((map :url)) (browse-url-xdg-open url))
+                  'sync))
+      (error "No documentation for %s" opcode))))
 
 (defun ce-set-input (input)
   "Set the input to use as stdin for execution to INPUT, a string."
@@ -2233,12 +2395,13 @@ argument, prompt for sessions to discard."
   '((source . asm)
     (source . [asm output])
     (source [asm output] . exe)
-    (source [asm output] . [exe [:tools]]))
+    (source [asm output] . [exe [:tools]])
+    (source . device))
   "List of layouts.
 
 A layout can be either:
 
-  - a symbol (one of `source', `asm', `output', `exe', `tool')
+  - a symbol (one of `source', `asm', `device', `output', `exe', `tool')
     means fill the available space with that buffer
   - a cons (left . right) - recursively apply layouts
     left and right after splitting available space horizontally
@@ -2294,6 +2457,9 @@ LAYOUT must be as described in `compiler-explorer-layouts'."
             (override-window-buffer (selected-window) ce--buffer))
            ('asm
             (override-window-buffer (selected-window) ce--compiler-buffer))
+           ('device
+            (override-window-buffer
+             (selected-window) (ce--device-buffer)))
            ('output
             (override-window-buffer
              (selected-window) (get-buffer ce--output-buffer)))
@@ -2452,6 +2618,8 @@ by `compiler-explorer-make-link', or created by the website itself."
     (with-current-buffer ce--buffer
       (erase-buffer)
       (insert source))
+    (when (eq t (plist-get ce--compiler-data :supportsDeviceAsmView))
+      (ce-show-device))
     (when other-session
       (display-warning
        'compiler-explorer
