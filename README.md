@@ -46,6 +46,12 @@ contains the documentation for the opcode at point.
 `M-x compiler-explorer-jump` jumps to ASM block for the source line at point
 and vice versa.
 
+`M-x compiler-explorer-show-device` opens a buffer showing device code,
+such as CUDA PTX or SASS, for the selected target.
+
+`M-x compiler-explorer-set-device` selects what is shown in the device output
+buffer, such as CUDA PTX or SASS for a particular GPU architecture.
+
 ### Tools ###
 
 `M-x compiler-explorer-add-tool` asks for the name of a tool, adds it to

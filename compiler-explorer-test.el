@@ -39,9 +39,9 @@ After the BODY is evaluated, the session is destroyed."
            ,@body)
        (ce--cleanup))))
 
-(defun ce-test--wait ()
-  "Wait until compilation finishes."
-  (with-timeout (15 (error "Test timed out"))
+(defun ce-test--wait (&optional timeout)
+  "Wait up to TIMEOUT seconds for compilation."
+  (with-timeout ((or timeout 15) (error "Test timed out"))
     (while (or (member ce--recompile-timer timer-list)
                (process-live-p ce--last-compilation-request)
                (and ce--last-exe-request
@@ -61,12 +61,12 @@ After the BODY is evaluated, the session is destroyed."
           (accept-process-output nil 0.1)))
       msg)))
 
-(defun ce-test--insert (string)
-  "Erase source buffer then insert STRING and wait until compilation finishes."
+(defun ce-test--insert (string &optional timeout)
+  "Replace source with STRING and wait up to TIMEOUT seconds."
   (with-current-buffer ce--buffer
     (erase-buffer)
     (insert string)
-    (ce-test--wait)))
+    (ce-test--wait timeout)))
 
 (defun ce-test--compilation-result ()
   "Get the contents of compilation buffer."
@@ -688,6 +688,109 @@ __attribute__((noinline)) int bar() { asm (\"\"); return -1; }
         (ce-jump)
         (should (string-match-p "\\badd\\b\\|\\(\\blea\\b.*987654320\\)"
                                 (thing-at-point 'line)))))))
+
+(ert-deftest ce-device-view ()
+  (ce-test--with-session "cuda" "nvcc125u1"
+    (let ((ce--inhibit-request t))
+      (ce-set-compiler-args "-O2 -arch=sm_80"))
+    (ce-test--insert
+     "extern \"C\" __global__ void ce_device_test(int *out) { *out = 42; }\n"
+     60)
+    (should (eq (plist-get (process-get ce--last-compilation-request
+                                        'ce-response-data)
+                           :code)
+                0))
+    (should-not (get-buffer ce--device-buffer))
+    (ce-show-device)
+    (ce-test--wait 60)
+    (should (eq (plist-get (process-get ce--last-compilation-request
+                                        'ce-response-data)
+                           :code)
+                0))
+    (should ce--device-outputs)
+    (let ((request ce--last-compilation-request))
+      (ce-show-device)
+      (should (eq request ce--last-compilation-request)))
+    (with-current-buffer ce--device-buffer
+      (should (derived-mode-p 'asm-mode))
+      (should buffer-read-only)
+      (should ce--local-mode)
+      (should (string-match-p "ce_device_test" (buffer-string)))))
+  (should-not (get-buffer ce--device-buffer)))
+
+(ert-deftest ce-device-response ()
+  (ce-test--with-session "cuda" "nvcc125u1"
+    (let ((ce--inhibit-request t))
+      (ce-set-compiler-args "-O2 -arch=sm_80")
+      (ce-show-device))
+    (let ((source
+           (concat "extern \"C\" __global__ void "
+                   "ce_device_test(int *out) { *out = 42; }\n")))
+      (ce-test--insert source 60)
+      (let* ((request ce--last-compilation-request)
+             (host (ce-test--compilation-result))
+             (ptx (seq-find (pcase-lambda (`(,name . ,_))
+                              (string-prefix-p "PTX" name))
+                            ce--device-outputs))
+             (sass (assoc "SASS (sm_80)" ce--device-outputs)))
+        (should (eq (plist-get (process-get request 'ce-response-data) :code)
+                    0))
+        (should ptx)
+        (should sass)
+        (pcase-dolist (`(,name ,instruction ,other-instruction)
+                       `((,(car ptx) "st\\.global\\." "\\bSTG\\b")
+                         (,(car sass) "\\bSTG\\b" "st\\.global\\.")))
+          (ce-set-device name)
+          (should (equal ce--selected-device name))
+          (with-current-buffer ce--device-buffer
+            (should (string-match-p "ce_device_test" (buffer-string)))
+            (should (string-match-p instruction (buffer-string)))
+            (should-not (string-match-p other-instruction (buffer-string)))))
+        (should (eq request ce--last-compilation-request))
+        (should (equal host (ce-test--compilation-result)))
+        (should-error (ce-set-device "missing") :type 'user-error))
+      (let ((session (ce-current-session)))
+        (should (equal (plist-get session :device) "SASS (sm_80)"))
+        (ce--restore-session session)
+        (should (equal ce--selected-device "SASS (sm_80)"))
+        (ce-show-device)
+        (ce-test--wait 60)
+        (should (equal ce--selected-device "SASS (sm_80)"))
+        (with-current-buffer ce--device-buffer
+          (should (string-match-p "ce_device_test" (buffer-string)))
+          (should (string-match-p "\\bSTG\\b" (buffer-string)))))
+      (ce-test--insert "#error device test compilation failure\n" 60)
+      (should (integerp (plist-get (process-get ce--last-compilation-request
+                                                'ce-response-data)
+                                   :code)))
+      (should-not (eq (plist-get (process-get ce--last-compilation-request
+                                              'ce-response-data)
+                                 :code)
+                      0))
+      (should-not ce--device-outputs)
+      (with-current-buffer ce--device-buffer
+        (should (equal (buffer-string) "<No device output>\n")))
+      (should (equal ce--selected-device "SASS (sm_80)"))
+      (ce-test--insert source 60)
+      (should (eq (plist-get (process-get ce--last-compilation-request
+                                          'ce-response-data)
+                             :code)
+                  0))
+      (should (equal ce--selected-device "SASS (sm_80)"))
+      (with-current-buffer ce--device-buffer
+        (should (string-match-p "ce_device_test" (buffer-string)))
+        (should (string-match-p "\\bSTG\\b" (buffer-string))))
+      (ce-set-compiler-args "-O2 -arch=sm_86")
+      (ce-test--wait 60)
+      (should (eq (plist-get (process-get ce--last-compilation-request
+                                          'ce-response-data)
+                             :code)
+                  0))
+      (should-not (assoc "SASS (sm_80)" ce--device-outputs))
+      (should (assoc "SASS (sm_86)" ce--device-outputs))
+      (should (equal ce--selected-device (caar ce--device-outputs)))
+      (with-current-buffer ce--device-buffer
+        (should (string-match-p "ce_device_test" (buffer-string)))))))
 
 (provide 'compiler-explorer-test)
 ;;; compiler-explorer-test.el ends here
