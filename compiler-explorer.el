@@ -884,6 +884,56 @@ output buffer."
 
 (defvar ce--last-layout)
 (defvar ce-layouts)
+(defvar ce-menu)
+
+(defun ce--header-menu-keymap (menu &optional other-menu)
+  "Create a header keymap for MENU and optional OTHER-MENU."
+  (let ((map (make-sparse-keymap)))
+    (pcase-dolist (`(,button . ,name)
+                   `((mouse-1 . ,menu) (mouse-2 . ,other-menu)))
+      (when name
+        (define-key map (vector 'header-line button)
+                    (lambda (event)
+                      (interactive "@e")
+                      (pcase-let* ((`(menu-item ,_ ,submenu . ,properties)
+                                    (cdr (assq (intern name) ce-menu)))
+                                   (enabled (plist-member properties :enable))
+                                   (filter (plist-get properties :filter)))
+                        (unless (or (null enabled) (eval (cadr enabled) t))
+                          (user-error "%s is unavailable" name))
+                        (popup-menu
+                         (if filter (funcall filter submenu) submenu)
+                         event))))))
+    map))
+
+(defun ce--layout-menu-items (_items)
+  "Return menu items for selecting a window layout."
+  (cl-labels
+      ((describe (layout seen)
+         (pcase layout
+           ('nil nil)
+           ('source '("Source"))
+           ('asm '("ASM"))
+           ('device '("Device"))
+           ('output '("Output"))
+           ('exe '("Executor"))
+           ('tool '("Tool"))
+           (`[:tools] '("Tools"))
+           ((pred integerp)
+            (if (memq layout seen)
+                (list (format "Layout %d" layout))
+              (describe (nth layout ce-layouts) (cons layout seen))))
+           ((or `(,first . ,second) `[,first ,second])
+            (append (describe first seen) (describe second seen)))
+           (_ '("<unknown>")))))
+    (seq-map-indexed
+     (lambda (layout index)
+       (vector (format "Layout %d: %s" index
+                       (string-join (describe layout (list index)) ", "))
+               (lambda () (interactive) (ce-layout index))
+               :style 'radio
+               :selected (= index ce--last-layout)))
+     ce-layouts)))
 
 (defun ce--header-line-format-source ()
   "Get mode line construct for displaying header line in source buffer."
@@ -893,30 +943,21 @@ output buffer."
     ,(propertize
       (plist-get ce--language-data :name)
       'mouse-face 'header-line-highlight
-      'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1] #'ce-new-session)
-                (define-key map [header-line mouse-2] #'ce-previous-session)
-                map)
+      'keymap (ce--header-menu-keymap "New session" "Restore session")
       'help-echo (concat "mouse-1: New session\n"
-                         "mouse-2: Previous session"))
+                         "mouse-2: Restore session"))
     " | "
     ,(propertize
       (format "Layout: %d" ce--last-layout)
       'mouse-face 'header-line-highlight
-      'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1]
-                            (lambda ()
-                              (interactive)
-                              (ce-layout (1+ ce--last-layout))))
+      'keymap (let ((map (ce--header-menu-keymap "Layout")))
                 (define-key map [header-line mouse-2]
                             (lambda ()
-                              (interactive)
-                              (ce-layout (if (zerop ce--last-layout)
-                                             (1- (length ce-layouts))
-                                           (1- ce--last-layout)))))
+                              (interactive "@")
+                              (ce-layout (1+ ce--last-layout))))
                 map)
-      'help-echo (concat "mouse-1: Next layout\n"
-                         "mouse-2: Previous layout"))))
+      'help-echo (concat "mouse-1: Select layout\n"
+                         "mouse-2: Next layout"))))
 
 (defun ce--header-line-format-compiler ()
   "Get mode line construct for displaying header line in compilation buffers."
@@ -926,18 +967,13 @@ output buffer."
     ,(propertize
       (plist-get ce--compiler-data :name)
       'mouse-face 'header-line-highlight
-      'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1] #'ce-set-compiler)
-                map)
+      'keymap (ce--header-menu-keymap "Compiler")
       'help-echo "mouse-1: Select compiler")
     " | "
     ,(propertize
       (format "Libs: %s"  (length ce--selected-libraries))
       'mouse-face 'header-line-highlight
-      'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1] #'ce-add-library)
-                (define-key map [header-line mouse-2] #'ce-remove-library)
-                map)
+      'keymap (ce--header-menu-keymap "Add library" "Remove library")
       'help-echo (concat
                   "Libraries:\n"
                   (mapconcat
@@ -961,6 +997,16 @@ output buffer."
                            map)
                  'help-echo "mouse-1: Set arguments")))
 
+(defun ce--device-menu-items (&optional _items)
+  "Return menu items for selecting the device target."
+  (mapcar
+   (pcase-lambda (`(,name . ,_))
+     (vector name
+             (lambda () (interactive) (ce-set-device name))
+             :style 'radio
+             :selected (equal name ce--selected-device)))
+   ce--device-outputs))
+
 (defun ce--header-line-format-device ()
   "Get the header line for the device output buffer."
   `((:eval (ce--header-line-format-common))
@@ -968,9 +1014,7 @@ output buffer."
     ,(propertize
       (or ce--selected-device "none")
       'mouse-face 'header-line-highlight
-      'keymap (let ((map (make-keymap)))
-                (define-key map [header-line mouse-1] #'ce-set-device)
-                map)
+      'keymap (ce--header-menu-keymap "Select device target")
       'help-echo "mouse-1: Select device target")))
 
 (defun ce--header-line-format-executor ()
@@ -1063,9 +1107,12 @@ output buffer."
       ("New session"
        ,@(mapcar
           (pcase-lambda ((map :name))
-            (vector name (lambda ()
-                           (interactive)
-                           (ce-new-session name t))))
+            (vector
+             name (lambda ()
+                    (interactive)
+                    (ce-new-session name t))
+             :style 'radio
+             :selected (equal name (plist-get ce--language-data :name))))
           (seq-sort-by (lambda (lang) (plist-get lang :name))
                        #'string< (ce--languages))))
       ("Load example"
@@ -1093,12 +1140,16 @@ output buffer."
              (lambda (group compilers-in-group)
                (cl-list*
                 (if (string-empty-p group) "Other compilers" group)
-                (mapcar (lambda (name)
-                          (vector name
-                                  (lambda ()
-                                    (interactive)
-                                    (ce-set-compiler name))))
-                        compilers-in-group)))
+                (mapcar
+                 (lambda (name)
+                   (vector name
+                           (lambda ()
+                             (interactive)
+                             (ce-set-compiler name))
+                           :style 'radio
+                           :selected
+                           (equal name (plist-get ce--compiler-data :name))))
+                 compilers-in-group)))
              by-group))))
       ["Set compilation arguments" ce-set-compiler-args]
       ("Add library"
@@ -1202,15 +1253,10 @@ output buffer."
        :enable (eq t (plist-get ce--compiler-data :supportsDeviceAsmView))]
       ("Select device target"
        :enable ce--device-outputs
-       :filter
-       ,(lambda (_items)
-          (mapcar
-           (pcase-lambda (`(,name . ,_))
-             (vector name
-                     (lambda () (interactive) (ce-set-device name))
-                     :style 'radio
-                     :selected (equal name ce--selected-device)))
-           ce--device-outputs)))
+       :filter ce--device-menu-items)
+      ("Layout"
+       :enable ce-layouts
+       :filter ce--layout-menu-items)
       ["Next layout" ce-layout]
       ["Copy link to this session" ce-make-link]
       "--"
