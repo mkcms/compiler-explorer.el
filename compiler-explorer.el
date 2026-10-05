@@ -585,13 +585,13 @@ when multiple functions try to do it in a block of code.")
               :as #'ce--parse-json-compilation
               :then (lambda (resp)
                       (unless (plz-error-p resp)
-                        (funcall handler resp)
                         (process-put proc 'ce-response-data
-                                     resp))))))))
+                                     resp)
+                        (funcall handler resp))))))))
   (unless (eq t (plist-get ce--compiler-data :supportsExecute))
     (setq ce--last-exe-request nil)
     (ce--handle-compiler-with-no-execution))
-  (ce--build-overlays nil)
+  (ce--rebuild-overlays nil)
   (force-mode-line-update))
 
 (defun ce--request-async ()
@@ -689,7 +689,12 @@ The device buffer is current when this hook runs.")
       (ce--replace-buffer-contents buffer (current-buffer)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
-        (ansi-color-apply-on-region (point-min) (point-max)))
+        (ansi-color-apply-on-region (point-min) (point-max)))))
+  (ce--rebuild-overlays
+   (and ce--last-compilation-request
+        (process-get ce--last-compilation-request 'ce-response-data)))
+  (when-let* ((buffer (get-buffer ce--device-buffer)))
+    (with-current-buffer buffer
       (run-hook-with-args 'ce-post-device-update-hook ce--selected-device))
     (force-mode-line-update t)))
 
@@ -699,24 +704,13 @@ The device buffer is current when this hook runs.")
   "Handle compilation response contained in RESPONSE."
   (pcase-let (((map :asm :stdout :stderr :code :tools :devices) response)
               (compiler (get-buffer ce--compiler-buffer))
-              (output (get-buffer ce--output-buffer))
-              (source-to-asm-mappings nil))
+              (output (get-buffer ce--output-buffer)))
     (with-current-buffer compiler
       (with-temp-buffer
         (seq-do
-         (pcase-lambda ((map :text (:source (and source (map :line :file)))))
-           (let (mapping)
-             (when (and ce-source-to-asm-mappings line
-                        (plist-member source :file) (null file) (> line 0))
-               (if (setq mapping (assq line source-to-asm-mappings))
-                   (push (point) (cdr mapping))
-                 (push (cons line (list (point))) source-to-asm-mappings))))
-           (insert text "\n"))
+         (pcase-lambda ((map :text)) (insert text "\n"))
          asm)
-        (ce--replace-buffer-contents compiler (current-buffer)))
-
-      (when ce-source-to-asm-mappings
-        (ce--build-overlays source-to-asm-mappings)))
+        (ce--replace-buffer-contents compiler (current-buffer))))
 
     (ce--update-devices devices)
 
@@ -1456,6 +1450,139 @@ inside one of these colored blocks jumps to and highlights the
 corresponding overlay in the other buffer."
   :type 'boolean)
 
+(defun ce--add-mapping-overlay
+    (source-buffer source-region target-buffer target-region face)
+  "Add a mapping between SOURCE-REGION and TARGET-REGION using FACE.
+Each region is a (START . END) pair in SOURCE-BUFFER or TARGET-BUFFER.
+Reuse source overlays and merge consecutive target regions.
+Return the target overlay."
+  (cl-flet
+      ((add-overlay (buffer region)
+         (let ((ov (make-overlay (car region) (cdr region)
+                                 (get-buffer buffer))))
+           (overlay-put ov 'ce--overlay t)
+           (overlay-put ov 'face face)
+           (overlay-put ov 'priority -100)
+           (overlay-put
+            ov 'cursor-sensor-functions
+            (list
+             (lambda (_window _pos kind)
+               (let* ((siblings (overlay-get ov 'ce--overlay-group))
+                      (target (overlay-get
+                               (overlay-get ov 'ce--target)
+                               'ce--overlay-group))
+                      (ovs (cl-delete-duplicates
+                            (remq nil (append siblings target)))))
+                 (pcase kind
+                   ('entered (ce--cursor-entered ovs face))
+                   ('left (ce--cursor-left ovs face)))))))
+           ov)))
+    (let* ((source-overlay
+            (with-current-buffer source-buffer
+              (save-restriction
+                (widen)
+                (or (cl-find-if (lambda (ov) (overlay-get ov 'ce--overlay))
+                                (overlays-at (car source-region)))
+                    (let ((ov (add-overlay source-buffer source-region)))
+                      (overlay-put ov 'ce--overlay-group (list ov))
+                      ov)))))
+           (first-target (overlay-get source-overlay 'ce--target))
+           (group (and first-target
+                       (overlay-get first-target 'ce--overlay-group)))
+           (previous (car (last group))))
+      (if (and previous
+               (eq (overlay-buffer previous) (get-buffer target-buffer))
+               (= (overlay-end previous) (car target-region)))
+          ;; Merge adjacent regions in the same output buffer
+          (progn
+            (move-overlay previous (overlay-start previous)
+                          (cdr target-region))
+            previous)
+        ;; Add a target to the shared group and link it to the source
+        (let ((ov (add-overlay target-buffer target-region)))
+          (setq group (nconc group (list ov)))
+          (overlay-put ov 'ce--target source-overlay)
+          (overlay-put ov 'ce--overlay-group group)
+          (overlay-put source-overlay 'ce--target (car group))
+          ov)))))
+
+(defun ce--rebuild-overlays (response)
+  "Rebuild source mappings for host and selected device output from RESPONSE.
+Clear all previous mapping overlays first.  If RESPONSE is nil, only
+clear the overlays."
+  ;; 1. Clear mappings in all buffers
+  (dolist (buffer (list ce--buffer ce--compiler-buffer ce--device-buffer))
+    (when (get-buffer buffer)
+      (with-current-buffer buffer
+        (save-restriction
+          (widen)
+          (remove-overlays nil nil 'ce--overlay t)))))
+
+  (when (and response ce-source-to-asm-mappings (get-buffer ce--buffer))
+    (let ((regions nil))
+      ;; 2. Group host and device output regions by source line
+      (pcase-dolist
+          (`(,buffer . ,asm)
+           `((,ce--compiler-buffer . ,(plist-get response :asm))
+             (,ce--device-buffer
+              . ,(plist-get
+                  (cdr (assoc ce--selected-device ce--device-outputs))
+                  :asm))))
+        (when (get-buffer buffer)
+          (with-current-buffer buffer
+            (save-excursion
+              (save-restriction
+                (widen)
+                (goto-char (point-min))
+                (seq-do
+                 (pcase-lambda
+                   ((map (:source (and source (map :line :file :mainsource)))))
+                   (when
+                       (and (integerp line) (> line 0) (not (eobp))
+                            (or (eq mainsource t)
+                                (and (plist-member source :file) (null file))))
+                     (let ((mapping (assq line regions))
+                           (location
+                            (list buffer
+                                  (cons (point) (line-beginning-position 2)))))
+                       (if mapping
+                           (push location (cdr mapping))
+                         (push (list line location) regions))))
+                   (forward-line 1))
+                 asm))))))
+
+      ;; 3. Build mappings with one face per source line
+      (let ((faces (or ce-overlays '(default))))
+        (pcase-dolist
+            (`(,line . ,locations) (sort regions #'car-less-than-car))
+          (let ((face (car faces))
+                (source-region
+                 (with-current-buffer ce--buffer
+                   (save-excursion
+                     (save-restriction
+                       (widen)
+                       (goto-char (point-min))
+                       (when (and (zerop (forward-line (1- line)))
+                                  (not (eobp)))
+                         (cons (point) (line-beginning-position 2))))))))
+            (setq faces (append (cdr faces) (list face)))
+            (when source-region
+              (pcase face
+                ((pred integerp)
+                 (setq face `(:background ,(ce--overlay-bg-base face)
+                                          :extend t)))
+                (`(,'lighten . ,(and (pred integerp) value))
+                 (setq face `(:background ,(ce--overlay-bg-base value t)
+                                          :extend t))))
+              (pcase-dolist
+                  (`(,target-buffer ,target-region) (nreverse locations))
+                (ce--add-mapping-overlay ce--buffer source-region
+                                         target-buffer target-region face))))))
+      (dolist (buffer (list ce--buffer ce--compiler-buffer ce--device-buffer))
+        (when (get-buffer buffer)
+          (with-current-buffer buffer
+            (cursor-sensor-mode +1)))))))
+
 (defun ce--cursor-entered (overlays face)
   "Temporarily highlight all entered OVERLAYS using FACE as base face."
   (dolist (ov overlays)
@@ -1465,97 +1592,6 @@ corresponding overlay in the other buffer."
   "Unhighlight OVERLAYS that were left, restoring FACE as their face."
   (dolist (ov overlays)
     (overlay-put ov 'face face)))
-
-(defun ce--build-overlays (regions)
-  "Add source<->ASM mapping overlays in REGIONS.
-REGIONS should be a list of conses (LINE . POINTS), where LINE is
-the line number in source buffer, and POINTS is a list of points
-that are inside lines in the ASM buffer that map to this source
-line."
-  (with-current-buffer ce--compiler-buffer
-    (remove-overlays nil nil 'ce--overlay t))
-  (with-current-buffer ce--buffer
-    (remove-overlays nil nil 'ce--overlay t))
-
-  (setq regions (sort regions #'car-less-than-car))
-
-  (let* ((faces (or ce-overlays '(default)))
-         face
-         source-overlay asm-overlays
-         prev-ov
-         (make-cursor-sensor-functions
-          (lambda (ov face)
-            (list
-             (lambda (_window _pos kind)
-               (let* ((siblings
-                       (overlay-get ov 'ce--overlay-group))
-                      (target (overlay-get
-                               (overlay-get ov 'ce--target)
-                               'ce--overlay-group))
-                      (ovs (cl-delete-duplicates
-                            (remq nil
-                                  (append siblings target)))))
-                 (pcase kind
-                   ('entered (ce--cursor-entered ovs face))
-                   ('left (ce--cursor-left ovs face)))))))))
-    (pcase-dolist (`(,line-num . ,points-in-asm) regions)
-      (setq face (car faces))
-      (pcase face
-        ((pred integerp)
-         (setq face `(:background ,(ce--overlay-bg-base face) :extend t)))
-        (`(,'lighten . ,(and (pred integerp) value))
-         (setq face `(:background ,(ce--overlay-bg-base value t) :extend t))))
-      (setq faces (append (cdr faces) (list face)))
-      (setq asm-overlays nil source-overlay nil)
-
-      (with-current-buffer ce--buffer
-        (save-excursion
-          (save-restriction
-            (widen)
-            (goto-char (point-min))
-            (forward-line (1- line-num))
-            (let ((ov (make-overlay (line-beginning-position)
-                                    (line-beginning-position 2))))
-              (overlay-put ov 'ce--overlay t)
-              (overlay-put ov 'ce--overlay-group (list ov))
-              (overlay-put ov 'cursor-sensor-functions
-                           (funcall make-cursor-sensor-functions ov face))
-              (overlay-put ov 'face face)
-              (overlay-put ov 'priority -100)
-              (setq source-overlay ov))))
-        (cursor-sensor-mode +1))
-
-      (with-current-buffer ce--compiler-buffer
-        (dolist (pt points-in-asm)
-          (goto-char pt)
-          (setq prev-ov (car asm-overlays))
-          (cond
-           ;; Merge adjacent overlays
-           ((and prev-ov (= (overlay-end prev-ov)
-                            (line-beginning-position)))
-            (move-overlay prev-ov (overlay-start prev-ov)
-                          (line-beginning-position 2)))
-           ((and prev-ov (= (overlay-start prev-ov)
-                            (line-beginning-position 2)))
-            (move-overlay prev-ov (line-beginning-position)
-                          (overlay-end prev-ov)))
-           (t
-            (let ((ov (make-overlay (line-beginning-position)
-                                    (line-beginning-position 2))))
-              (overlay-put ov 'ce--overlay t)
-              (overlay-put ov 'ce--target source-overlay)
-              (overlay-put ov 'cursor-sensor-functions
-                           (funcall make-cursor-sensor-functions ov face))
-              (overlay-put ov 'face face)
-              (overlay-put ov 'priority -100)
-
-              (push ov asm-overlays)))))
-        (cursor-sensor-mode +1))
-
-      (setq asm-overlays (seq-sort-by #'overlay-start #'< asm-overlays))
-      (dolist (ov asm-overlays)
-        (overlay-put ov 'ce--overlay-group asm-overlays))
-      (overlay-put source-overlay 'ce--target (car asm-overlays)))))
 
 
 ;; Stuff/hacks for integration with other packages
