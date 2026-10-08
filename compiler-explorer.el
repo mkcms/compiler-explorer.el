@@ -202,7 +202,9 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
 
 (defun ce--parse-json ()
   "Parse buffer as json plist."
-  (let ((json-object-type 'plist))
+  (let ((json-object-type 'plist)
+        (json-array-type 'vector)
+        (json-key-type 'keyword))
     (json-read)))
 
 (cl-defun ce--request-sync
@@ -256,9 +258,10 @@ URL parameters: ?FIELD1=VALUE1&FIELD2=VALUE2..."
 (defun ce--libraries (id)
   "Get available libraries for language ID."
   (with-memoization (map-elt ce--libraries id)
-    (ce--request-sync
-     (format "Fetching %S libraries" id)
-     (ce--url "libraries" id))))
+    (or (ce--request-sync
+         (format "Fetching %S libraries" id)
+         (ce--url "libraries" id))
+        [])))
 
 (defvar ce--asm-opcode-docs-cache
   (make-hash-table :test #'equal)
@@ -322,9 +325,10 @@ Keys are example names, values are example objects as returned by the API.
 If LANG is non-nil, return only examples for language with that id."
   (let ((examples
          (with-memoization ce--examples
-           (ce--request-sync
-            "Fetching all examples"
-            (concat ce-url "/source/builtin/list")))))
+           (or (ce--request-sync
+                "Fetching all examples"
+                (concat ce-url "/source/builtin/list"))
+               []))))
     (remq 'none
           (mapcar
            (lambda (example)
@@ -349,11 +353,13 @@ Values are the example objects from API.")
 (defvar ce--tools nil)
 (defun ce--tools (lang)
   "Get a list of tools for given LANG."
-  (with-memoization (map-elt ce--tools lang)
-    (seq-map (lambda (elt) (cons (plist-get elt :id) elt))
-             (ce--request-sync
-              (format "Fetching %S tools" (or lang "all"))
-              (ce--url "tools" lang)))))
+  (if (map-contains-key ce--tools lang)
+      (map-elt ce--tools lang)
+    (setf (map-elt ce--tools lang)
+          (seq-map (lambda (elt) (cons (plist-get elt :id) elt))
+                   (ce--request-sync
+                    (format "Fetching %S tools" (or lang "all"))
+                    (ce--url "tools" lang))))))
 
 
 ;; Compilation
