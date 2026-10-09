@@ -43,6 +43,7 @@ After the BODY is evaluated, the session is destroyed."
   "Wait up to TIMEOUT seconds for compilation."
   (with-timeout ((or timeout 15) (error "Test timed out"))
     (while (or (member ce--recompile-timer timer-list)
+               ce--remote-include-fetch-queue
                (process-live-p ce--last-compilation-request)
                (and ce--last-exe-request
                     (process-live-p ce--last-exe-request)))
@@ -791,6 +792,125 @@ __attribute__((noinline)) int bar() { asm (\"\"); return -1; }
       (should (equal ce--selected-device (caar ce--device-outputs)))
       (with-current-buffer ce--device-buffer
         (should (string-match-p "ce_device_test" (buffer-string)))))))
+
+(ert-deftest ce-remote-include-cancellation ()
+  "Check that cancelled downloads cannot affect a newer request."
+  (let ((ce--remote-include-cache (make-hash-table :test #'equal))
+        (ce--remote-include-fetch-queue nil)
+        (ce--remote-include-error nil)
+        (ce--last-compilation-request nil)
+        (ce--last-exe-request nil)
+        (ce--recompile-timer nil)
+        (completed 0)
+        (errors 0))
+    (cl-letf (((symbol-function 'plz-run) #'identity))
+      (let* ((then (lambda (_source _files) (cl-incf completed)))
+             (else (lambda (_url _err) (cl-incf errors)))
+             (old (ce--fetch-remote-includes
+                   (concat "#include <https://example.test/old.hpp>\n"
+                           "#include <https://example.test/pending.hpp>\n")
+                   then else))
+             (requests (copy-sequence (plz-queue-requests old))))
+        (ce--cancel-requests)
+        (should-not ce--remote-include-fetch-queue)
+        (should-not (plz-queue-requests old))
+        (let* ((new (ce--fetch-remote-includes
+                     "#include <https://example.test/new.hpp>\n"
+                     then else))
+               (request (car (plz-queue-requests new))))
+          (dolist (request requests)
+            (funcall (plz-queued-request-then request) "stale")
+            (funcall (plz-queued-request-else request)
+                     (make-plz-error :message "Late failure")))
+          (funcall (plz-queue-finally old))
+          (should (eq new ce--remote-include-fetch-queue))
+          (should (zerop (hash-table-count ce--remote-include-cache)))
+          (should (zerop completed))
+          (should (zerop errors))
+          (funcall (plz-queued-request-then request) "current")
+          (funcall (plz-queue-finally new))
+          (should (= completed 1))
+          (should-not ce--remote-include-fetch-queue))))))
+
+(ert-deftest ce-remote-include-response ()
+  "Check multiple remote includes are fetched."
+  (ce-test--with-session "C++" "x86-64 gcc 15.1"
+    (let ((ce--inhibit-request t))
+      (ce-set-compiler-args "-std=c++17 -O1"))
+    (let* ((sha-url
+            (concat "https://raw.githubusercontent.com/okdshin/PicoSHA2/"
+                    "v1.0.1/picosha2.h"))
+           (expected-url
+            (concat "https://raw.githubusercontent.com/TartanLlama/expected/"
+                    "v1.1.0/include/tl/expected.hpp"))
+           (missing (concat sha-url ".missing"))
+           (source
+            (format
+             "#include <%s>
+#include \"%s\"
+#include <cstdio>
+
+tl::expected<std::string, int> f() {
+  std::string src_str = \"The quick brown fox jumps over the lazy dog\";
+  std::vector<unsigned char> hash(picosha2::k_digest_size);
+  picosha2::hash256(src_str.begin(), src_str.end(), hash.begin(), hash.end());
+  return picosha2::bytes_to_hex_string(hash.begin(), hash.end());
+}
+
+int main(int argc, char **argv) {
+  tl::expected<std::string, int> result = f();
+  std::printf(\"%%s\\n\", result->c_str());
+}"
+             sha-url expected-url))
+           (request-function (symbol-function 'plz))
+           downloads)
+      (cl-letf (((symbol-function 'plz)
+                 (lambda (method request-url &rest args)
+                   (when (eq method 'get)
+                     (push request-url downloads))
+                   (apply request-function method request-url args))))
+        (cl-flet
+            ((check-result ()
+               (ce-test--insert source 60)
+               (should-not ce--remote-include-error)
+               (with-timeout (60 (error "Test timed out"))
+                 (while (not (cl-every
+                              (lambda (request)
+                                (and request
+                                     (process-get request 'ce-response-data)))
+                              (list ce--last-compilation-request
+                                    ce--last-exe-request)))
+                   (accept-process-output nil 0.1)))
+               (dolist (request (list ce--last-compilation-request
+                                      ce--last-exe-request))
+                 (should (eq 0 (plist-get
+                                (process-get request 'ce-response-data)
+                                :code))))
+               (should
+                (string-match-p
+                 (concat "d7a8fbb307d7809469ca9abcb0082e4f"
+                         "8d5651e46d3cdb762d02d0bf37c9e592")
+                 (ce-test--execution-result)))
+               (dolist (url (list sha-url expected-url))
+                 (should (= (cl-count url downloads :test #'equal) 1)))
+               (with-current-buffer ce--buffer
+                 (should (equal (buffer-string) source)))))
+          (check-result)
+          (ce-test--insert (format "#include <%s>\n" missing) 60)
+          (let* ((expected (format "Cannot fetch %s: HTTP 404" missing))
+                 (header (ce--header-line-format-common)))
+            (should (equal ce--remote-include-error expected))
+            (should (equal header "CE: ERROR"))
+            (should (equal (get-text-property 4 'help-echo header) expected))
+            (with-current-buffer ce--output-buffer
+              (should (equal (buffer-string) (concat expected "\n")))))
+          (should (equal (ce-test--compilation-result) ""))
+          (should (equal (ce-test--execution-result) ""))
+          (should-not ce--last-compilation-request)
+          (should-not ce--last-exe-request)
+          (should-not (gethash missing ce--remote-include-cache))
+          (check-result)))))
+  (should (zerop (hash-table-count ce--remote-include-cache))))
 
 (provide 'compiler-explorer-test)
 ;;; compiler-explorer-test.el ends here

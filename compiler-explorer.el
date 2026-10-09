@@ -168,6 +168,7 @@
 (require 'json)
 (require 'plz)
 (require 'pulse)
+(require 'rx)
 (require 'subr-x)
 (require 'url-util)
 
@@ -511,10 +512,30 @@ with `json-parse', and a message is displayed.")
 This can be temporarily let-bound to defer making async requests
 when multiple functions try to do it in a block of code.")
 
+(defvar ce--remote-include-fetch-queue)
+(defvar ce--remote-include-error)
+
+(defun ce--cancel-requests ()
+  "Cancel pending downloads, compilation and execution."
+  (let ((queue ce--remote-include-fetch-queue)
+        (requests (list ce--last-compilation-request ce--last-exe-request)))
+    ;; Invalidate callbacks before cancellation can invoke them
+    (setq ce--remote-include-fetch-queue nil
+          ce--remote-include-error nil
+          ce--last-compilation-request nil
+          ce--last-exe-request nil)
+    (when ce--recompile-timer
+      (cancel-timer ce--recompile-timer)
+      (setq ce--recompile-timer nil))
+    (when queue
+      (plz-clear queue))
+    (dolist (request requests)
+      (when (and request (process-live-p request))
+        (delete-process request)))))
+
 (defun ce--schedule-compilation (&rest _args)
   "Schedule recompilation after buffer is modified."
-  (when ce--recompile-timer
-    (cancel-timer ce--recompile-timer))
+  (ce--cancel-requests)
   (setq ce--recompile-timer (run-with-timer 0.5 nil #'ce--request-async))
 
   ;; Prevent 'kill anyway?' when killing the buffer.
@@ -523,8 +544,8 @@ when multiple functions try to do it in a block of code.")
   ;; Set the header line status to "Wait..."
   (force-mode-line-update t))
 
-(defun ce--request-async-1 ()
-  "Subr of `compiler-explorer--request-async'."
+(defun ce--request-async-1 (source files)
+  "Send compilation and execution requests for SOURCE and FILES."
   (pcase-dolist
       (`(,executorRequest ,symbol ,handler)
        `((:json-false
@@ -535,10 +556,6 @@ when multiple functions try to do it in a block of code.")
              '((t
                 ce--last-exe-request
                 ce--handle-execution-response)))))
-    (when-let* ((last (symbol-value symbol)))
-      ;; Abort last request
-      (when (process-live-p last)
-        (delete-process last)))
     (let (proc)
       (setq
        proc
@@ -552,9 +569,8 @@ when multiple functions try to do it in a block of code.")
               :body (let ((json-object-type 'plist))
                       (json-encode
                        `(
-                         :source
-                         ,(with-current-buffer ce--buffer
-                            (buffer-string))
+                         :source ,source
+                         :files ,files
                          :options
                          (
                           :userArguments ,ce--compiler-arguments
@@ -584,22 +600,28 @@ when multiple functions try to do it in a block of code.")
                          :allowStoreCodeDebug :json-false)))
               :as #'ce--parse-json-compilation
               :then (lambda (resp)
-                      (unless (plz-error-p resp)
+                      (when (and (eq proc (symbol-value symbol))
+                                 (not (plz-error-p resp)))
                         (process-put proc 'ce-response-data
                                      resp)
                         (funcall handler resp))))))))
   (unless (eq t (plist-get ce--compiler-data :supportsExecute))
     (setq ce--last-exe-request nil)
     (ce--handle-compiler-with-no-execution))
-  (ce--rebuild-overlays nil)
   (force-mode-line-update))
 
 (defun ce--request-async ()
   "Queue compilation and execution and return immediately.
 This calls `compiler-explorer--handle-compilation-response' and
 `compiler-explorer--handle-execution-response' once the responses arrive."
+  (ce--cancel-requests)
   (unless ce--inhibit-request
-    (ce--request-async-1)))
+    (ce--rebuild-overlays nil)
+    (ce--fetch-remote-includes
+     (with-current-buffer ce--buffer (buffer-string))
+     #'ce--request-async-1
+     #'ce--handle-remote-include-error)
+    (force-mode-line-update t)))
 
 (defvar ce--project-dir)
 
@@ -822,6 +844,103 @@ output buffer."
       (run-hooks 'ce-post-execution-hook))))
 
 
+;; Remote includes
+
+(defvar ce--remote-include-fetch-queue nil
+  "Queue for the current remote include downloads.")
+
+(defvar ce--remote-include-error nil
+  "Error message from the latest remote include download failure.")
+
+(defvar ce--remote-include-cache (make-hash-table :test #'equal)
+  "Hash table of remote include contents for the current session.")
+
+(defvar ce--remote-include-regexp
+  (rx line-start
+      (* (in " \t")) "#" (* (in " \t")) "include"
+      (* (in " \t"))
+      (group (in "<\"")
+             (group "http" (optional "s") "://"
+                    (+ (not (in ">\"\n"))))
+             (in ">\"")))
+  "Regexp matching remote includes with the URL in group 2.
+Group 1 includes the delimiters.")
+
+(defun ce--fetch-remote-includes (source then else)
+  "Fetch remote includes in SOURCE, calling THEN on success or ELSE on failure.
+
+SOURCE is the source string.  After all URLs are fetched or retrieved
+from cache, THEN receives the rewritten source and a vector of file
+plists (:filename FILENAME :contents CONTENTS).  URLs in SOURCE are
+replaced with filenames containing their SHA-256 hashes.  On failure,
+ELSE receives the failed URL and error.  If canceled via
+`compiler-explorer--cancel-requests', neither callback is called."
+  (let ((queue (make-plz-queue :limit 4))
+        includes)
+    (with-temp-buffer
+      (insert source)
+      (goto-char (point-min))
+      (let ((case-fold-search nil))
+        (while (re-search-forward ce--remote-include-regexp nil t)
+          (let* ((url (match-string-no-properties 2))
+                 (filename (concat "ce-url-" (secure-hash 'sha256 url) ".h")))
+            (replace-match (concat "\"" filename "\"") t t nil 1)
+            (unless (assoc url includes)
+              (push (cons url filename) includes)))))
+      (setq source (buffer-string)))
+    (setq includes (nreverse includes))
+    (setf (plz-queue-finally queue)
+          (lambda ()
+            (when (eq queue ce--remote-include-fetch-queue)
+              (setq ce--remote-include-fetch-queue nil)
+              (funcall
+               then source
+               (vconcat
+                (mapcar
+                 (pcase-lambda (`(,url . ,filename))
+                   (list :filename filename
+                         :contents (gethash url ce--remote-include-cache)))
+                 includes))))))
+    (setq ce--remote-include-fetch-queue queue)
+    (pcase-dolist (`(,url . ,_) includes)
+      (unless (gethash url ce--remote-include-cache)
+        (plz-queue queue 'get url
+          :as 'string
+          :then (lambda (contents)
+                  (when (eq queue ce--remote-include-fetch-queue)
+                    (puthash url contents ce--remote-include-cache)))
+          :else (lambda (err)
+                  (when (eq queue ce--remote-include-fetch-queue)
+                    (ce--cancel-requests)
+                    (funcall else url err))))))
+    (condition-case err
+        (plz-run queue)
+      (error
+       (ce--cancel-requests)
+       (signal (car err) (cdr err))))))
+
+(defun ce--handle-remote-include-error (url err)
+  "Report remote include failure ERR for URL and clear previous output."
+  (setq ce--remote-include-error
+        (format "Cannot fetch %s: %s" url
+                (if-let* ((response (plz-error-response err)))
+                    (format "HTTP %s" (plz-response-status response))
+                  (or (cdr (plz-error-curl-error err))
+                      (plz-error-message err)
+                      "Request failed"))))
+  (with-temp-buffer
+    (dolist (buffer (cl-list* ce--compiler-buffer ce--exe-output-buffer
+                             (mapcar #'cadr ce--selected-tools)))
+      (when-let* ((target (get-buffer buffer)))
+        (ce--replace-buffer-contents target (current-buffer))))
+    (insert ce--remote-include-error "\n")
+    (ce--replace-buffer-contents (get-buffer ce--output-buffer)
+                                 (current-buffer)))
+  (ce--update-devices nil)
+  (message "%s" ce--remote-include-error)
+  (force-mode-line-update t))
+
+
 ;; UI
 
 (defun ce--header-line-format-common ()
@@ -832,14 +951,18 @@ output buffer."
     (propertize
      (concat "CE: "
              (cond
+              (ce--remote-include-error
+               (propertize "ERROR" 'face 'error
+                           'help-echo ce--remote-include-error))
               ((and (null resp) is-exe
                     (eq :json-false
                         (plist-get ce--compiler-data :supportsExecute)))
                (propertize "ERROR" 'face 'error))
-              ((null resp) "")
-              ((or (process-live-p resp)
+              ((or ce--remote-include-fetch-queue
+                   (and resp (process-live-p resp))
                    (member ce--recompile-timer timer-list))
                "Wait...")
+              ((null resp) "")
               ((/= 0 (process-exit-status resp))
                (propertize "ERROR" 'face 'error
                            'help-echo (format
@@ -1340,14 +1463,8 @@ If SKIP-SAVE-SESSION is non-nil, don't attempt to save the last session."
 
   ;; Abort last request and cancel the timer for recompilation.
   (with-demoted-errors "compiler-explorer--cleanup: %s"
-    (when-let* ((req ce--last-compilation-request))
-      (when (process-live-p req)
-        (delete-process req)))
-    (when-let* ((req ce--last-exe-request))
-      (when (process-live-p req)
-        (delete-process req)))
-    (when ce--recompile-timer
-      (cancel-timer ce--recompile-timer)))
+    (ce--cancel-requests))
+  (clrhash ce--remote-include-cache)
 
   ;; Kill all of our buffers.
   (mapc (lambda (buffer)
