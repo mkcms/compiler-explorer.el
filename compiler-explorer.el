@@ -85,6 +85,13 @@
 ;; M-x `compiler-explorer-jump' jumps to ASM block for the source line at
 ;; point and vice versa.
 ;;
+;; M-x `compiler-explorer-show-instruction-bytes' displays instruction
+;; bytes in the current compilation buffer.
+;;
+;; M-x `compiler-explorer-copy-instruction-bytes' copies bytes of the
+;; instruction on the current line or in the active region into the kill
+;; ring.
+;;
 ;; M-x `compiler-explorer-show-device' opens a buffer showing device code,
 ;; such as CUDA PTX or SASS, for the selected target.
 ;;
@@ -661,6 +668,21 @@ contents are replaced destructively and point is not preserved."
           (erase-buffer)
           (insert-buffer-substring source))))))
 
+(defun ce--propertize-asm (asm)
+  "Attach ASM entries to the corresponding lines in the current buffer."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (goto-char (point-min))
+      (seq-do
+       (lambda (line)
+         (unless (eobp)
+           (add-text-properties
+            (point) (line-beginning-position 2)
+            (list 'ce--asm-line line
+                  'rear-nonsticky '(ce--asm-line)))
+           (forward-line 1)))
+       asm))))
+
 (defvar ce-post-compilation-hook nil
   "Hook called after recompilation is performed.
 The ASM buffer is current when this hook runs.")
@@ -711,7 +733,9 @@ The device buffer is current when this hook runs.")
       (ce--replace-buffer-contents buffer (current-buffer)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
-        (ansi-color-apply-on-region (point-min) (point-max)))))
+        (ansi-color-apply-on-region (point-min) (point-max)))
+      (ce--propertize-asm
+       (plist-get (cdr (assoc ce--selected-device ce--device-outputs)) :asm))))
   (ce--rebuild-overlays
    (and ce--last-compilation-request
         (process-get ce--last-compilation-request 'ce-response-data)))
@@ -732,7 +756,8 @@ The device buffer is current when this hook runs.")
         (seq-do
          (pcase-lambda ((map :text)) (insert text "\n"))
          asm)
-        (ce--replace-buffer-contents compiler (current-buffer))))
+        (ce--replace-buffer-contents compiler (current-buffer)))
+      (ce--propertize-asm asm))
 
     (ce--update-devices devices)
 
@@ -2131,6 +2156,120 @@ the same source line."
                  (1+ (cl-position target-ov group))
                  (length group)))
     (error "No corresponding ASM or source code block at point")))
+
+(defun ce--asm-lines ()
+  "Return ASM entries for unchanged lines in the current output buffer.
+Use nil for lines without ASM data."
+  (unless (member (buffer-name) (list ce--compiler-buffer ce--device-buffer))
+    (user-error "Not in a compiler or device output buffer"))
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (let (lines)
+        (while (not (eobp))
+          (let ((line (get-text-property (point) 'ce--asm-line)))
+            (push (and (equal (plist-get line :text)
+                              (buffer-substring-no-properties
+                               (point) (line-end-position)))
+                       line)
+                  lines))
+          (forward-line 1))
+        (nreverse lines)))))
+
+(defun ce-copy-instruction-bytes (start end)
+  "Copy instruction bytes from lines between START and END to the kill ring.
+Interactively, use the active region or the line at point.  Skip lines
+without instruction bytes."
+  (interactive
+   (if (use-region-p)
+       (list (region-beginning) (region-end))
+     (list (line-beginning-position) (line-beginning-position 2))))
+  (let* ((asm (ce--asm-lines))
+         (first (min (1- (line-number-at-pos start t)) (length asm)))
+         (last (min (line-number-at-pos (max start (1- end)) t)
+                    (length asm)))
+         (bytes (seq-keep
+                 (pcase-lambda ((map :opcodes :text))
+                   (unless (seq-empty-p opcodes)
+                     (cons (mapconcat #'identity opcodes " ")
+                           (string-trim text))))
+                 (seq-subseq asm first last))))
+    (unless bytes
+      (user-error
+       (concat "No instruction bytes on these lines.  Enable "
+               "\"Compile to binary\" or \"Compile to binary object\" "
+               "and recompile")))
+    (let* ((width (apply #'max (mapcar (lambda (line) (length (car line)))
+                                       bytes)))
+           (fmt (format "%%-%ds ;; %%s" width))
+           (text (mapconcat (lambda (line) (format fmt (car line) (cdr line)))
+                            bytes "\n")))
+      (kill-new text)
+      (message "Copied: %s" text))))
+
+(defvar ce-instruction-bytes-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "n") #'next-logical-line)
+    (define-key map (kbd "p") #'previous-logical-line)
+    (define-key map (kbd "C-SPC") #'set-mark-command)
+    (define-key map (kbd "c") #'ce-copy-instruction-bytes)
+    (define-key map (kbd "q") #'ignore)
+    map)
+  "Keymap for the instruction byte view.")
+
+(defun ce-show-instruction-bytes ()
+  "Display the bytes corresponding to each instruction in the current buffer.
+Open a transient view for moving between instructions, selecting a
+region and copying bytes.  Return a function that closes the view."
+  (interactive)
+  (let ((asm (ce--asm-lines))
+        (buffer (current-buffer))
+        (map ce-instruction-bytes-map)
+        overlays exit)
+    (unwind-protect
+        (progn
+          (save-excursion
+            (save-restriction
+              (widen)
+              (goto-char (point-min))
+              (seq-do
+               (pcase-lambda ((map :opcodes))
+                 (when (and (not (seq-empty-p opcodes)) (not (eobp)))
+                   (let ((ov (make-overlay
+                              (point) (line-beginning-position 2))))
+                     (push ov overlays)
+                     (overlay-put
+                      ov 'before-string
+                      (propertize
+                       (concat (make-string (current-indentation) ?\s)
+                               (mapconcat #'identity opcodes " ") "\n")
+                       'face 'shadow))))
+                 (forward-line 1))
+               asm)))
+          (unless overlays
+            (user-error (concat "No instruction bytes in this output.  Enable "
+                                "\"Compile to binary\" or "
+                                "\"Compile to binary object\" and recompile")))
+          (setq exit
+                (set-transient-map
+                 map
+                 (lambda ()
+                   (and (eq (current-buffer) buffer)
+                        (overlay-buffer (car overlays))
+                        (not (eq this-command #'ignore))
+                        (eq this-command
+                            (lookup-key map (this-command-keys-vector)))))
+                 (lambda () (mapc #'delete-overlay overlays))
+                 (substitute-command-keys
+                  (concat "\\<compiler-explorer-instruction-bytes-map>"
+                          "Instruction bytes: \\[next-logical-line]/"
+                          "\\[previous-logical-line] move, "
+                          "\\[set-mark-command] mark, "
+                          "\\[compiler-explorer-copy-instruction-bytes] copy, "
+                          "\\[ignore] quit")))))
+      (unless exit
+        (mapc #'delete-overlay overlays)))))
 
 (defun ce-browse-opcode-documentation (opcode)
   "Browse documentation for OPCODE in external browser.

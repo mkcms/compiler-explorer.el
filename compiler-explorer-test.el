@@ -245,6 +245,74 @@ foo:
       (should (string-match-p "Transfers program control to a different point"
                               (ce-test--help-message))))))
 
+(ert-deftest ce-instruction-bytes ()
+  "Check instruction byte display and copying."
+  (let ((ce-output-filters
+         (plist-put (plist-put (copy-sequence ce-output-filters) :binary nil)
+                    :binaryObject t)))
+    (ce-test--with-session "C++" "x86-64 gcc 15.1"
+      (let ((ce--inhibit-request t))
+        (ce-set-compiler-args "-O0"))
+      (ce-test--insert "int square(int x) { return x * x; }\n" 60)
+      (with-current-buffer ce--compiler-buffer
+        (let* ((response (process-get ce--last-compilation-request
+                                      'ce-response-data))
+               (asm (plist-get response :asm))
+               (instructions
+                (seq-filter (pcase-lambda ((map :opcodes))
+                              (not (seq-empty-p opcodes)))
+                            asm))
+               (kill-ring nil)
+               (kill-ring-yank-pointer nil)
+               (interprogram-cut-function nil)
+               (interprogram-paste-function nil)
+               (transient-mark-mode t)
+               overlays exit)
+          (should (eq (plist-get response :code) 0))
+          (should (> (length instructions) 2))
+          (unwind-protect
+              (progn
+                (setq exit (ce-show-instruction-bytes))
+                (setq overlays
+                      (seq-sort-by
+                       #'overlay-start #'<
+                       (seq-filter
+                        (lambda (ov) (overlay-get ov 'before-string))
+                        (overlays-in (point-min) (point-max)))))
+                (should (= (length overlays) (length instructions)))
+                (dolist (ov overlays)
+                  (let* ((line (line-number-at-pos (overlay-start ov)))
+                         (opcodes (plist-get (elt asm (1- line)) :opcodes)))
+                    (should-not (seq-empty-p opcodes))
+                    (should
+                     (equal (string-trim (overlay-get ov 'before-string))
+                            (mapconcat #'identity opcodes " ")))))
+                (cl-flet
+                    ((check-copy (expected)
+                       (call-interactively #'ce-copy-instruction-bytes)
+                       (let* ((lines (split-string (car kill-ring) "\n"))
+                              (column (string-match ";; " (car lines))))
+                         (should column)
+                         (should (= (length lines) (length expected)))
+                         (cl-mapc
+                          (pcase-lambda ((map :opcodes :text) line)
+                            (should (equal (string-match ";; " line) column))
+                            (should
+                             (equal (split-string (substring line 0 column))
+                                    (append opcodes nil)))
+                            (should (equal (substring line (+ column 3))
+                                           (string-trim text))))
+                          expected lines))))
+                  (goto-char (overlay-start (car overlays)))
+                  (deactivate-mark)
+                  (check-copy (list (car instructions)))
+                  (goto-char (point-min))
+                  (push-mark (overlay-start (car (last overlays))) t t)
+                  (check-copy (butlast instructions))))
+            (when exit
+              (funcall exit)))
+          (should-not (seq-some #'overlay-buffer overlays)))))))
+
 (ert-deftest ce-loading-example ()
   "Check that we can load an example."
   (ce-test--with-session "C++" "x86-64 clang (trunk)"
