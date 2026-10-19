@@ -1587,6 +1587,12 @@ overlays will be invisible when using percentages."
                   (cons :tag "Darken or lighten automatically" (const auto)
                         integer))))
 
+(defcustom ce-overlay-fade 50
+  "Percentage by which to fade inactive mapping backgrounds.
+Use a value from 0 to 100.  Zero disables fading, and 100 uses the
+default background color."
+  :type 'integer)
+
 (defface ce-cursor-entered
   `((t :weight bold))
   "Face used for overlays containing the point.")
@@ -1610,7 +1616,7 @@ Return the target overlay."
          (let ((ov (make-overlay (car region) (cdr region)
                                  (get-buffer buffer))))
            (overlay-put ov 'ce--overlay t)
-           (overlay-put ov 'face face)
+           (overlay-put ov 'face (ce--fade-face face))
            (overlay-put ov 'priority -100)
            (overlay-put
             ov 'cursor-sensor-functions
@@ -1760,15 +1766,37 @@ clear the overlays."
             (dolist (function (overlay-get ov 'cursor-sensor-functions))
               (funcall function (selected-window) nil 'entered))))))))
 
+(defun ce--fade-face (face)
+  "Return FACE with its background faded toward the default background."
+  (if-let* (((> ce-overlay-fade 0))
+            (fade (/ (min ce-overlay-fade 100) 100.0))
+            (background (face-background 'default nil t))
+            (color (if (facep face)
+                       (face-background face nil t)
+                     (plist-get face :background)))
+            (background-rgb (color-name-to-rgb background))
+            (color-rgb (color-name-to-rgb color))
+            ((not (equal color-rgb background-rgb))))
+      (let ((faded-background
+             (apply #'color-rgb-to-hex
+                    (cl-mapcar (lambda (color background)
+                                 (+ (* (- 1 fade) color) (* fade background)))
+                               color-rgb background-rgb))))
+        (plist-put
+         (if (facep face) (list :inherit face) (copy-sequence face))
+         :background faded-background))
+    face))
+
 (defun ce--cursor-entered (overlays face)
   "Temporarily highlight all entered OVERLAYS using FACE as base face."
   (dolist (ov overlays)
     (overlay-put ov 'face `(:inherit (ce-cursor-entered ,face)))))
 
 (defun ce--cursor-left (overlays face)
-  "Unhighlight OVERLAYS that were left, restoring FACE as their face."
-  (dolist (ov overlays)
-    (overlay-put ov 'face face)))
+  "Fade OVERLAYS toward the default background using FACE."
+  (let ((face (ce--fade-face face)))
+    (dolist (ov overlays)
+      (overlay-put ov 'face face))))
 
 
 ;; Stuff/hacks for integration with other packages
