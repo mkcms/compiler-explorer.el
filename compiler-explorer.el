@@ -1553,7 +1553,8 @@ If LIGHTER is non-nil then the color is lighter instead."
           (setq l2 (+ l (* 0.01 percent (if lighter 1 -1)))))
         (apply #'color-rgb-to-hex (color-hsl-to-rgb h s l2))))))
 
-(defcustom ce-overlays '(46 28 17 10 6)
+(defcustom ce-overlays
+  '((auto . 46) (auto . 28) (auto . 17) (auto . 10) (auto . 6))
   "List for controlling how source<->ASM mapping overlays are displayed.
 
 For each source line that maps to an ASM block, a single element is
@@ -1572,12 +1573,18 @@ many percent.
 A cons (\\='lighten . NUMBER) - similarly, a face is synthesized, but
 the background color is lighter by this many percent, not darker.
 
+A cons (\\='auto . NUMBER) - darken or lighten the background color of
+the default face by this many percent.  Darken on light backgrounds
+and lighten on dark backgrounds.
+
 Note: if the default face has unspecified background color, then the
-overlays will be invisible if using the darken/lighten option."
+overlays will be invisible when using percentages."
   :type '(repeat
           (choice face
                   (integer :tag "Darken percentage")
                   (cons :tag "Lighten percentage" (const lighten)
+                        integer)
+                  (cons :tag "Darken or lighten automatically" (const auto)
                         integer))))
 
 (defface ce-cursor-entered
@@ -1724,7 +1731,14 @@ clear the overlays."
                                           :extend t)))
                 (`(,'lighten . ,(and (pred integerp) value))
                  (setq face `(:background ,(ce--overlay-bg-base value t)
-                                          :extend t))))
+                                          :extend t)))
+                (`(,'auto . ,(and (pred integerp) value))
+                 (setq face
+                       `(:background
+                         ,(ce--overlay-bg-base
+                           value (eq (frame-parameter nil 'background-mode)
+                                     'dark))
+                         :extend t))))
               (pcase-dolist
                   (`(,target-buffer ,target-region) (nreverse locations))
                 (ce--add-mapping-overlay ce--buffer source-region
