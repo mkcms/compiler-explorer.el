@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'compiler-explorer)
+(require 'cursor-sensor)
 (require 'ert)
 
 (defmacro ce-test--with-session (lang compiler &rest body)
@@ -727,9 +728,31 @@ __attribute__((noinline)) int bar() { asm (\"\"); return -1; }
 
       (search-forward "foo")
       (save-current-buffer
-        (ce-jump)
+        (let ((pulse-flag nil))
+          (ce-jump))
         (should (equal (current-buffer) (get-buffer ce--compiler-buffer)))
         (should (string-match-p "987654321" (thing-at-point 'line)))
+        (let* ((pulse pulse-momentary-overlay)
+               (mapping (cl-find-if (lambda (ov) (overlay-get ov 'ce--overlay))
+                                    (overlays-at (point)))))
+          (unwind-protect
+              (progn
+                (should mapping)
+                (should-not (eq pulse mapping))
+                (should (= (overlay-start pulse) (overlay-start mapping)))
+                (should (= (overlay-end pulse) (overlay-end mapping)))
+                (let ((face (overlay-get pulse 'face)))
+                  (dolist (function
+                           (overlay-get mapping 'cursor-sensor-functions))
+                    (funcall function (selected-window) nil 'left)
+                    (funcall function (selected-window) nil 'entered))
+                  (should (equal (overlay-get pulse 'face) face)))
+                (let ((face (overlay-get mapping 'face)))
+                  (pulse-momentary-unhighlight)
+                  (should-not (overlay-buffer pulse))
+                  (should (overlay-buffer mapping))
+                  (should (equal (overlay-get mapping 'face) face))))
+            (pulse-momentary-unhighlight)))
         (forward-line 1)
         (ce-jump)
         (should (equal (current-buffer) (get-buffer ce--buffer)))
@@ -757,6 +780,85 @@ __attribute__((noinline)) int bar() { asm (\"\"); return -1; }
         (ce-jump)
         (should (string-match-p "\\badd\\b\\|\\(\\blea\\b.*987654320\\)"
                                 (thing-at-point 'line)))))))
+
+(ert-deftest ce-mapping-highlight ()
+  "Check that mapping highlights follow the selected window."
+  (let ((source (generate-new-buffer " *ce-source*"))
+        (target (generate-new-buffer " *ce-target*")))
+    (unwind-protect
+        (save-window-excursion
+          (let ((ce--buffer (buffer-name source))
+                (window-state-change-functions
+                 '(ce--update-cursor-highlights)))
+            (dolist (buffer (list source target))
+              (with-current-buffer buffer
+                (insert "one\ntwo\n\n")))
+            (let* ((first (ce--add-mapping-overlay
+                           source '(1 . 5) target '(1 . 5) 'default))
+                   (second (ce--add-mapping-overlay
+                            source '(5 . 9) target '(5 . 9) 'default))
+                   (source-window (selected-window))
+                   (target-window (split-window-right)))
+              (set-window-buffer source-window source)
+              (set-window-buffer target-window target)
+              (set-window-point source-window 1)
+              (set-window-point target-window 5)
+              (select-window source-window)
+              (dolist (buffer (list source target))
+                (with-current-buffer buffer
+                  (cursor-sensor-mode +1)))
+              (cl-flet
+                  ((check (active)
+                     (dolist (ov (list first second))
+                       (let ((face (if (eq ov active)
+                                       '(:inherit (ce-cursor-entered default))
+                                     'default)))
+                         (should (equal (overlay-get ov 'face) face))
+                         (should
+                          (equal (overlay-get (overlay-get ov 'ce--target)
+                                              'face)
+                                 face)))))
+                   (redisplay-window (window)
+                     (with-current-buffer (window-buffer window)
+                       (run-hook-with-args 'pre-redisplay-functions window)))
+                   (refresh ()
+                     (run-hook-with-args 'window-state-change-functions
+                                         (selected-frame))))
+                (redisplay-window source-window)
+                (redisplay-window target-window)
+                (check first)
+                (select-window target-window)
+                (refresh)
+                (redisplay-window target-window)
+                (check second)
+                (select-window source-window)
+                (refresh)
+                (redisplay-window source-window)
+                (check first)
+                (goto-char 5)
+                (redisplay-window source-window)
+                (check second)
+                (set-window-point target-window 9)
+                (redisplay-window target-window)
+                (check second)
+                (switch-to-buffer target)
+                (goto-char 1)
+                (refresh)
+                (redisplay-window source-window)
+                (check first)
+                (goto-char 9)
+                (redisplay-window source-window)
+                (check nil)
+                (switch-to-buffer source)
+                (refresh)
+                (redisplay-window source-window)
+                (check second)
+                (with-temp-buffer
+                  (switch-to-buffer (current-buffer))
+                  (refresh)
+                  (check nil))))))
+      (kill-buffer source)
+      (kill-buffer target))))
 
 (ert-deftest ce-device-view ()
   (ce-test--with-session "cuda" "nvcc125u1"

@@ -1608,16 +1608,25 @@ Return the target overlay."
            (overlay-put
             ov 'cursor-sensor-functions
             (list
-             (lambda (_window _pos kind)
+             (lambda (_window _pos _kind)
                (let* ((siblings (overlay-get ov 'ce--overlay-group))
                       (target (overlay-get
                                (overlay-get ov 'ce--target)
                                'ce--overlay-group))
                       (ovs (cl-delete-duplicates
-                            (remq nil (append siblings target)))))
-                 (pcase kind
-                   ('entered (ce--cursor-entered ovs face))
-                   ('left (ce--cursor-left ovs face)))))))
+                            (remq nil (append siblings target))))
+                      (window (selected-window))
+                      (buffer (window-buffer window))
+                      (pos (window-point window)))
+                 ;; Cursor sensors also run in unselected windows
+                 (if (seq-some
+                      (lambda (mapped)
+                        (and (eq (overlay-buffer mapped) buffer)
+                             (<= (overlay-start mapped) pos)
+                             (< pos (overlay-end mapped))))
+                      ovs)
+                     (ce--cursor-entered ovs face)
+                   (ce--cursor-left ovs face))))))
            ov)))
     (let* ((source-overlay
             (with-current-buffer source-buffer
@@ -1724,6 +1733,18 @@ clear the overlays."
         (when (get-buffer buffer)
           (with-current-buffer buffer
             (cursor-sensor-mode +1)))))))
+
+(defun ce--update-cursor-highlights (_frame)
+  "Update highlighted mapping after a window change."
+  ;; Switching windows or buffers need not trigger cursor sensors
+  (when-let* ((buffer (get-buffer ce--buffer)))
+    (with-current-buffer buffer
+      (let ((overlays (overlay-lists)))
+        (dolist (ov (append (car overlays) (cdr overlays)))
+          (when (and (overlay-get ov 'ce--overlay)
+                     (overlay-get ov 'ce--target))
+            (dolist (function (overlay-get ov 'cursor-sensor-functions))
+              (funcall function (selected-window) nil 'entered))))))))
 
 (defun ce--cursor-entered (overlays face)
   "Temporarily highlight all entered OVERLAYS using FACE as base face."
@@ -2030,6 +2051,10 @@ It must have been created with `compiler-explorer--current-session'."
   :keymap ce-mode-map
   :require 'compiler-explorer
   (add-hook 'kill-emacs-hook #'ce--save-sessions)
+  (if ce-mode
+      (add-hook 'window-state-change-functions #'ce--update-cursor-highlights)
+    (remove-hook
+     'window-state-change-functions #'ce--update-cursor-highlights))
   (unless ce-mode
     (ce--cleanup)))
 
@@ -2144,10 +2169,8 @@ the same source line."
         (pop-to-buffer (overlay-buffer target-ov))
         (goto-char (overlay-start target-ov))
 
-        ;; Pulse it later, as `cursor-sensor-functions' might trigger right
-        ;; after we quit this function (due to point movement), and they might
-        ;; change the overlay's face.
-        (run-with-timer 0.0 nil #'pulse-momentary-highlight-overlay target-ov)
+        (pulse-momentary-highlight-region (overlay-start target-ov)
+                                          (overlay-end target-ov))
 
         (message "%s block %d/%d"
                  (if (eq (current-buffer)
