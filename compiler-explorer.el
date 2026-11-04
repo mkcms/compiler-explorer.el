@@ -850,23 +850,42 @@ output buffer."
 
 (defun ce--handle-execution-response (response)
   "Handle execution response contained in RESPONSE."
-  (pcase-let (((map :stdout :stderr :code) response))
+  (pcase-let (((map :stdout :stderr :code :didExecute :buildResult) response))
     (with-current-buffer ce--exe-output-buffer
       (let ((inhibit-read-only t)
             (buf (current-buffer)))
         (with-temp-buffer
-          (insert "Program stdout:\n")
-          (insert (mapconcat (lambda (line) (plist-get line :text))
-                             stdout "\n")
-                  "\n")
-          (insert "Program stderr:\n")
-          (insert (mapconcat (lambda (line) (plist-get line :text))
-                             stderr "\n")
-                  "\n")
-          (insert (format "Program exited with code %s" code))
+          (when (eq didExecute :json-false)
+            (insert "Could not execute the program\n"
+                    (mapconcat (lambda (line) (plist-get line :text))
+                               (seq-concatenate 'list stdout stderr) "\n")
+                    "\n\n"))
+          (pcase-dolist
+              (`(,label . ,lines)
+               `(("Compiler stdout" . ,(plist-get buildResult :stdout))
+                 ("Compiler stderr" . ,(plist-get buildResult :stderr))))
+            (unless (seq-empty-p lines)
+              (insert label ":\n"
+                      (mapconcat (lambda (line) (plist-get line :text))
+                                 lines "\n")
+                      "\n\n")))
+          (if (eq didExecute :json-false)
+              (when buildResult
+                (insert (format "Compiler exited with code %s"
+                                (plist-get buildResult :code))))
+            (insert "Program stdout:\n")
+            (insert (mapconcat (lambda (line) (plist-get line :text))
+                               stdout "\n")
+                    "\n")
+            (insert "Program stderr:\n")
+            (insert (mapconcat (lambda (line) (plist-get line :text))
+                               stderr "\n")
+                    "\n")
+            (insert (format "Program exited with code %s" code)))
           (ce--replace-buffer-contents buf (current-buffer)))
         (ansi-color-apply-on-region (point-min) (point-max)))
-      (run-hooks 'ce-post-execution-hook))))
+      (run-hooks 'ce-post-execution-hook)))
+  (force-mode-line-update t))
 
 
 ;; Remote includes
@@ -972,6 +991,7 @@ ELSE receives the failed URL and error.  If canceled via
   "Get the mode line template used in compiler explorer mode."
   (let* ((is-exe (eq (current-buffer)
                      (get-buffer ce--exe-output-buffer)))
+         (output-buffer (if is-exe ce--exe-output-buffer ce--output-buffer))
          (resp (if is-exe ce--last-exe-request ce--last-compilation-request)))
     (propertize
      (concat "CE: "
@@ -995,34 +1015,46 @@ ELSE receives the failed URL and error.  If canceled via
                                        (process-status resp)
                                        (process-exit-status resp))))
               (t
-               (pcase-let (((map :stdout :stderr)
-                            (process-get resp
-                                         'ce-response-data)))
+               (pcase-let* (((map :stdout :stderr :didExecute :buildResult)
+                             (process-get resp 'ce-response-data))
+                            (build (and is-exe buildResult))
+                            (stdout-count
+                             (+ (length stdout)
+                                (length (plist-get build :stdout))))
+                            (stderr-count
+                             (+ (length stderr)
+                                (length (plist-get build :stderr))))
+                            (failed (and is-exe
+                                         (eq didExecute :json-false))))
                  (propertize
                   (format "%s (%s/%s)"
-                          (propertize "Done" 'face 'success)
-                          (length stdout)
-                          (propertize (format "%s" (length stderr))
-                                      'face (if (> (length stderr) 0) 'error)))
-                  'help-echo (with-current-buffer ce--output-buffer
-                               ;; Get at most 30 output lines
-                               (save-excursion
-                                 (goto-char (point-min))
-                                 (forward-line 30)
-                                 (concat
-                                  (buffer-substring (point-min)
-                                                    (line-beginning-position))
-                                  (unless (= (line-beginning-position)
-                                             (point-max))
-                                    (concat "... message truncated. "
-                                            "See output buffer to "
-                                            "show all.\n"))
-                                  "\nmouse-1: "
-                                  " Show output buffer."))))))))
-     'mouse-face 'mode-line-highlight
-     'keymap (let ((map (make-keymap)))
-               (define-key map [header-line mouse-1] #'ce-show-output)
-               map))))
+                          (propertize (if failed "ERROR" "Done")
+                                      'face (if failed 'error 'success))
+                          stdout-count
+                          (propertize (format "%s" stderr-count)
+                                      'face (if (> stderr-count 0) 'error)))
+                  'help-echo
+                  (with-current-buffer output-buffer
+                    ;; Get at most 30 output lines
+                    (save-excursion
+                      (save-restriction
+                        (widen)
+                        (goto-char (point-min))
+                        (forward-line 30)
+                        (concat
+                         (buffer-substring (point-min) (point))
+                         (unless (eobp)
+                           (concat "... message truncated."
+                                   (unless is-exe
+                                     " See output buffer to show all.")
+                                   "\n"))
+                         (unless is-exe
+                           "\nmouse-1: Show output buffer."))))))))))
+     'mouse-face (unless is-exe 'mode-line-highlight)
+     'keymap (unless is-exe
+               (let ((map (make-keymap)))
+                 (define-key map [header-line mouse-1] #'ce-show-output)
+                 map)))))
 
 (defvar ce--last-layout)
 (defvar ce-layouts)
