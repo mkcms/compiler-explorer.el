@@ -1,3 +1,46 @@
+2026-11-14  Michał Krzywkowski  <k.michal@zoho.com>
+
+	Version 0.10.0
+
+	- Minimum Emacs version was bumped to 29.1 from 28.1.
+
+	- CUDA/device output: New command `compiler-explorer-show-device'
+	shows a separate buffer containing the SASS/PTX code for the
+	current session, for compilers that support it.  New command
+	`compiler-explorer-set-device' switches between SASS/PTX shown in
+	this buffer.  New hook `compiler-explorer-post-device-update-hook'
+	runs after the device output buffer is updated.  The existing
+	`compiler-explorer-params-change-hook' now also reports changes to
+	the selected device target.
+
+	- Added support for remote includes (#include <https://...>).
+
+	- New command `compiler-explorer-show-instruction-bytes' displays
+	bytes for the instructions in the ASM buffer.
+	`compiler-explorer-copy-instruction-bytes' copies the bytes for
+	the instructions in the selected region or at point into the kill
+	ring.
+
+	- Inactive source/ASM mapping backgrounds now fade to make the
+	active mapping stand out.  New user option
+	`compiler-explorer-overlay-fade' controls the fading level.
+
+	- The source/ASM mapping overlays will now be automatically made
+	brighter on dark backgrounds, and darker on light backgrounds.
+	`compiler-explorer-overlays' now supports `(auto . NUMBER)'
+	entries.
+
+	- Clicking on the buttons in the headers for each buffer now opens
+	pop-up menus allowing selection of the new
+	compiler/language/layout/libraries.
+
+	- The execution buffer now displays compiler output separately
+	from program output, exposing failures such as linker errors even
+	when the ASM compilation succeeds.
+
+	- Fixed a few issues with the source/ASM mapping highlights
+	becoming stale.
+
 2026-03-25  Michał Krzywkowski  <k.michal@zoho.com>
 
 	Version 0.9.0
